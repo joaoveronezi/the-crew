@@ -45,7 +45,7 @@ Your numbers depend on your repository and contracts; `crew cost` shows them.
 Every coder, reviewer and triage call appends one line to `cost.jsonl` in the run directory:
 
 ```json
-{"ts":"…","run":"…","task":"WEB-TITLE-001","round":2,"version":1,"role":"coder","model":"haiku","resumed":true,
+{"ts":"…","run":"…","task":"WEB-TITLE-1","round":2,"version":1,"role":"coder","model":"haiku","resumed":true,
  "session":"…","cost":0.0016,"tokens":{"input":6,"output":1058,"cache_write":1890,"cache_write_1h":1890,"cache_read":69302},
  "session_total":{"cost":0.008,"tokens":{…}}}
 ```
@@ -55,8 +55,8 @@ A resumed session reports cost and tokens for the whole session so far, so each 
 ```text
 $ crew cost <run>
 task            role      model   calls  cost $  cache write  cache read  read share
-WEB-TITLE-001   coder     haiku   2      0.01    24k          153k        86%
-WEB-TITLE-001   reviewer  sonnet  1      0.08    20k          19k         47%
+WEB-TITLE-1   coder     haiku   2      0.01    24k          153k        86%
+WEB-TITLE-1   reviewer  sonnet  1      0.08    20k          19k         47%
 total                             3      0.09    44k          172k        79%
 ```
 
