@@ -8,7 +8,7 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  ROOT, appendEvent, callClaude, cfg, withTrailer, contractPath, fingerprint, formatFindings, git, identify, killGroup, loadContract, log, now,
+  CODER_RESUME, ROOT, appendEvent, callClaude, cfg, withTrailer, contractPath, fingerprint, formatFindings, git, identify, killGroup, loadContract, log, now,
   outOfScope, outputKey, readEvents, readJson, repeated, reviewProgress, retry, runDir, shell, taskState, tryGit, withLocks, worktreeOf, writeJson,
 } from './lib.mjs';
 
@@ -26,6 +26,7 @@ const SELF = identify(process.pid);
 const save = (patch = {}) => writeJson(statusFile, Object.assign(st, patch, { updated: now(), proc: SELF }));
 const emit = (type, data = {}) => appendEvent(run, type, id, data, 'driver');
 const onSpawn = (pid) => save({ child: identify(pid) });
+const ledger = () => ({ run, task: id, round: st.round, version: c.version });
 
 setInterval(() => save(), 60_000).unref(); // heartbeat: the orchestrator treats a stale `updated` as a hung driver
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { killGroup(st.child); process.exit(143); });
@@ -36,7 +37,7 @@ function stop(type, data) { emit(type, data); save({ phase: type }); throw new S
 
 // Relaunch after the boss acted: a new contract version restarts the rounds, a conflict goes back through sync.
 const state = taskState(readEvents(run), id);
-if (st.contract !== c.version) save({ contract: c.version, phase: existsSync(wt) ? 'code' : 'prepare', round: 1, findings: [], fingerprints: [] });
+if (st.contract !== c.version) save({ contract: c.version, phase: existsSync(wt) ? 'code' : 'prepare', round: 1, findings: [], fingerprints: [], coder_session: null });
 if (state === 'rebase_needed') save({ phase: 'sync', sync_rounds: 0 });
 const HANDED_OFF = ['help', 'escalate', 'blocked', 'needs_replan'];
 if (['retry', 'replanned'].includes(state) && HANDED_OFF.includes(st.phase)) save({ phase: st.resume_phase ?? 'code', coder_failures: 0, reviewer_failures: 0 });
@@ -91,12 +92,15 @@ Contract (machine): ${contractPath(run, id)}
 Worktree (your cwd): ${wt}
 Allowed files: ${c.allowed_files.map((f) => `${f.path} (${f.op})`).join(', ')}
 ${repair}`;
-  log(`round ${st.round}: coder (${c.models.coder})`);
+  // The coder session continues across this contract version's rounds, so its context is a cache read. A replan
+  // starts a fresh one, and so does the retry after a failed call.
+  const resume = CODER_RESUME ? st.coder_session ?? null : null;
+  log(`round ${st.round}: coder (${c.models.coder})${resume ? ' resumed' : ''}`);
   const r = await withLocks(c.locks, id, () => callClaude({
     role: 'coder', model: c.models.coder, prompt, budget: c.budget_usd.coder, timeoutMin: c.timeout_min.coder,
-    cwd: wt, logFile: join(logs, `r${st.round}-coder.jsonl`), onSpawn,
+    cwd: wt, logFile: join(logs, `r${st.round}-coder.jsonl`), onSpawn, resume, ledger: ledger(),
   }));
-  save({ cost: st.cost + r.cost });
+  save({ cost: st.cost + r.cost, coder_session: r.ok ? r.session : null });
   if (!r.ok) return callFailed('coder', r.failure);
   const { status, summary, reason } = r.output;
   emit('round', { round: st.round, step: 'coder', status, summary });
@@ -156,7 +160,7 @@ ${checks || '- none'}
 ${previous}`;
   log(`round ${st.round}: reviewer (${c.models.reviewer})`);
   const before = head();
-  const r = await callClaude({ role: 'reviewer', model: c.models.reviewer, prompt, budget: c.budget_usd.reviewer, timeoutMin: c.timeout_min.reviewer, cwd: wt, logFile: join(logs, `r${st.round}-reviewer.jsonl`), onSpawn });
+  const r = await callClaude({ role: 'reviewer', model: c.models.reviewer, prompt, budget: c.budget_usd.reviewer, timeoutMin: c.timeout_min.reviewer, cwd: wt, logFile: join(logs, `r${st.round}-reviewer.jsonl`), onSpawn, ledger: ledger() });
   save({ cost: st.cost + r.cost });
   if (head() !== before || git(wt, 'status', '--porcelain')) {
     git(wt, 'reset', '--hard', before); // the reviewer is read-only; undo anything it left

@@ -5,7 +5,7 @@ You are the coder of one crew task. The contract has already decided everything.
 Your cwd is the task's git worktree. Edit files only inside it. The project's CLAUDE.md / AGENTS.md rules apply to you.
 
 1. Read the prose contract (`.md`) and the machine contract (`.json`) named in the prompt. The prose has the steps, patterns and exact strings. The JSON has the allowed files and the commands that will judge you.
-2. Round 1: apply **Execution → Steps** in order. Repair rounds: fix the listed findings and nothing else.
+2. Round 1: apply **Execution → Steps** in order. Repair rounds: fix the listed findings and nothing else. In a resumed session you already know the contract; re-read only what the findings need.
    - A `conflict` finding means the file has merge-conflict markers. Resolve them keeping both sides' intent.
    - A `scope` finding means you changed a file outside the allowlist. Revert it with `git restore <path>`, or delete it if you created it.
 3. Touch only the allowed files. Copy the listed patterns' style, naming and comment density, and use any exact strings the contract gives.

@@ -78,10 +78,10 @@ Contract: ${contractPath(run, id)} (locks: ${c.locks.join(', ') || 'none'})`;
     log(`triage ${id}: ${why}`);
     const r = await callClaude({
       role: 'triage', model: 'sonnet', prompt, budget: c.budget_usd.triage, timeoutMin: 20, cwd: ROOT,
-      logFile: join(runDir(run), 'logs', id, `triage-${d.triages}.jsonl`),
+      logFile: join(runDir(run), 'logs', id, `triage-${d.triages}.jsonl`), ledger: { run, task: id, round: null, version: c.version },
     });
     const { action, diagnosis, fixed } = r.ok ? r.output : { action: 'escalate', diagnosis: `triage call failed: ${r.failure}` };
-    emit('triage', id, { why, action, diagnosis, fixed });
+    emit('triage', id, { why, action, diagnosis, fixed, cost_usd: Math.round(r.cost * 100) / 100 });
     const state = lastStatus(readEvents(run), id)?.type ?? 'none';
     if (action === 'retry') {
       if (state === 'help') emit('retry', id, { reason: diagnosis });

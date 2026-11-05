@@ -33,6 +33,7 @@ The boss can veto a merge that passed every gate, but can never override a faile
 | `orch-<batch>.json` (driver processes, restarts, triages) | that batch's orchestrator |
 | `logs/<id>/` (driver.log, `r<k>-coder.jsonl`, `r<k>-reviewer.jsonl`, check logs, triage) | driver / orchestrator |
 | `reports/<id>.md` (summary, acceptance evidence, review notes, cost) | driver at hand-off; becomes the merge commit body |
+| `cost.jsonl` (append-only, one line per coder/reviewer/triage call: its own cost, tokens, cache reads and writes, session) | `lib.mjs callClaude` |
 
 `batches/<batch>.json`: `{"tasks": ["A", "B"], "max_parallel": 2, "dry_run": false}`.
 
@@ -58,7 +59,8 @@ prepare ─> code ─> verify ─> review ─> sync ─> report ─> ready_to_me
              └───────┴─────────┴────────┘  findings (scope | check | review | conflict)
 ```
 
-- **Rounds.** Round k is one coder call plus one reviewer call, each a fresh `claude -p` process. The reviewer sees only the previous round's blocking findings, never the coder's account of its work.
+- **Rounds.** Round k is one coder call plus one reviewer call. The coder resumes its own session across the rounds of one contract version, so its earlier context is read from the prompt cache instead of being rewritten; a replan, or a retry after a failed coder call, starts a fresh session. The reviewer is a fresh `claude -p` every round and sees only the previous round's blocking findings, never the coder's account of its work.
+- **Prompt cache.** Every call runs with `--exclude-dynamic-system-prompt-sections`, so all calls of one role and model share one cached system prompt across worktrees, and with the 1-hour cache TTL (`ENABLE_PROMPT_CACHING_1H`), so it outlives checks and waits. `CREW_SHARED_PREFIX=0`, `CREW_CACHE_1H=0` and `CREW_CODER_RESUME=0` each turn one off for a run.
 - **Failed checks skip the review.** A failure goes straight back to the coder, so the stronger reviewer is spent only on green code.
 - **Convergence.**
   - The reviewer marks each earlier finding `fixed`, `partial` or `not_fixed`. `partial` continues; `not_fixed` twice in a row → `needs_replan`.

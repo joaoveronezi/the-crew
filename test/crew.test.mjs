@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   checkTransition, fingerprint, identify, isRunning, npmScriptsReferenced, orderingErrors, outOfScope, outputKey, repeated,
-  reviewProgress, sandboxSettings, shapeErrors, taskState, withConfigDefaults, withDefaults, withTrailer, ROOT,
+  reviewProgress, sandboxSettings, shapeErrors, taskState, withConfigDefaults, withDefaults, withTrailer, ROOT, callShare, callUsage, sumCosts,
 } from '../skill/lib.mjs';
 import {
   issueErrors, normalizeIssue, parseFrontMatter, parseJsonIssues, parseMdIssues, updateFrontMatterIssue, updateJsonIssues, updateMdIssue,
@@ -147,4 +147,41 @@ test('commits carry no trailer unless the project configures one', () => {
   assert.equal(withTrailer('fix: x', { commitTrailer: null }), 'fix: x');
   assert.equal(withTrailer('fix: x', { commitTrailer: 'Signed-off-by: A <a@example.com>' }), 'fix: x\n\nSigned-off-by: A <a@example.com>');
   assert.equal(withTrailer('fix: x\n\nbody\n\nCrew-Task: r/T', { commitTrailer: 'T: v' }), 'fix: x\n\nbody\n\nCrew-Task: r/T\nT: v');
+});
+
+test('models default to a haiku coder and a sonnet reviewer, and either can be overridden', () => {
+  assert.deepEqual(withDefaults({ id: 'T' }).models, { coder: 'haiku', reviewer: 'sonnet' });
+  assert.deepEqual(withDefaults({ id: 'T', models: { reviewer: 'opus' } }).models, { coder: 'haiku', reviewer: 'opus' });
+});
+
+test('call usage sums every model in the call; a missing result is all zeros', () => {
+  const result = { modelUsage: {
+    'claude-haiku': { inputTokens: 10, outputTokens: 5, cacheCreationInputTokens: 100, cacheCreationEphemeral1hInputTokens: 100, cacheReadInputTokens: 1000 },
+    'claude-sonnet': { inputTokens: 2, outputTokens: 1, cacheCreationInputTokens: 50, cacheReadInputTokens: 500 },
+  } };
+  assert.deepEqual(callUsage(result), { input: 12, output: 6, cache_write: 150, cache_write_1h: 100, cache_read: 1500 });
+  assert.deepEqual(callUsage(null), { input: 0, output: 0, cache_write: 0, cache_write_1h: 0, cache_read: 0 });
+});
+
+test('a resumed call is charged only its share of the cumulative session totals', () => {
+  const total = { cost: 0.5, tokens: { input: 30, output: 20, cache_write: 1100, cache_write_1h: 1100, cache_read: 9000 } };
+  const prior = { cost: 0.3, tokens: { input: 10, output: 15, cache_write: 1000, cache_write_1h: 1000, cache_read: 4000 } };
+  const share = callShare(total, prior);
+  assert.ok(Math.abs(share.cost - 0.2) < 1e-9);
+  assert.deepEqual(share.tokens, { input: 20, output: 5, cache_write: 100, cache_write_1h: 100, cache_read: 5000 });
+  assert.deepEqual(callShare(total, null), total, 'a fresh call is its own total');
+});
+
+test('cost totals group ledger entries by key, triage included', () => {
+  const entries = [
+    { task: 'A', role: 'coder', cost: 0.25, tokens: { cache_write: 100, cache_read: 900 } },
+    { task: 'A', role: 'coder', cost: 0.05, tokens: { cache_write: 10, cache_read: 990 } },
+    { task: 'A', role: 'triage', cost: 0.5 },
+    { task: 'B', role: 'reviewer', cost: 1 },
+  ];
+  const byTask = sumCosts(entries, (e) => e.task);
+  assert.equal(byTask.get('A').calls, 3);
+  assert.equal(byTask.get('A').cost, 0.8);
+  assert.equal(byTask.get('A').cache_read, 1890);
+  assert.equal(byTask.get('B').cost, 1);
 });

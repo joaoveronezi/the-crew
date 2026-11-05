@@ -14,7 +14,8 @@ Written by `/crew adapt` and committed with the project. Every field is optional
   "secretFiles": [".env", ".env.local"],
   "network": { "allowedDomains": ["registry.npmjs.org"] },
   "docsCheck": "npm run lint:docs",
-  "commitTrailer": null
+  "commitTrailer": null,
+  "securityPaths": "auth|session|token|secret|security|crypto|password|permission|payment|migration"
 }
 ```
 
@@ -32,6 +33,7 @@ Written by `/crew adapt` and committed with the project. Every field is optional
 | `secretFiles` | Paths (relative to the repo root, at any depth) that coders and reviewers may never read |
 | `network.allowedDomains` | Hosts that sandboxed coder/reviewer commands may reach, besides localhost. Package registries, usually |
 | `docsCheck` | Command `crew wrapup` runs after applying docs edits (a link checker, a docs build). `null` to skip |
+| `securityPaths` | Regex (case-insensitive) for files whose review justifies Opus. `validate` warns about an Opus reviewer on a task that touches none of them |
 | `commitTrailer` | A line appended to every crew commit message, e.g. `Signed-off-by: …` or a `Co-Authored-By:` line. `null` (the default) adds nothing |
 
 The sandbox also always denies home credentials (`~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.npmrc`, …) and edits to anything in the main folder, so coders work only in their worktree.

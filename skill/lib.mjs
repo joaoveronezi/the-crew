@@ -39,6 +39,8 @@ export const CONFIG_DEFAULTS = {
   network: { allowedDomains: ['registry.npmjs.org'] },
   docsCheck: null,
   commitTrailer: null,
+  // validate warns about an Opus reviewer on a task whose allowed files match none of this (case-insensitive).
+  securityPaths: 'auth|session|token|secret|security|crypto|password|permission|payment|migration',
 };
 export function withConfigDefaults(raw) {
   return { ...CONFIG_DEFAULTS, ...raw, issues: { ...CONFIG_DEFAULTS.issues, ...raw.issues }, network: { ...CONFIG_DEFAULTS.network, ...raw.network } };
@@ -172,11 +174,13 @@ export const MODELS = ['haiku', 'sonnet', 'opus'];
 export const DEFAULTS = {
   depends_on: [], setup: [], checks: [], gates: [], locks: [], docs: [], max_rounds: 3,
   close_issue: true, manual_acceptance: null,
+  models: { coder: 'haiku', reviewer: 'sonnet' },
   budget_usd: { coder: 5, reviewer: 2, triage: 1 },
   timeout_min: { setup: 20, coder: 45, reviewer: 20, checks: 30 },
 };
 export function withDefaults(raw) {
   const c = { ...DEFAULTS, ...raw };
+  c.models = { ...DEFAULTS.models, ...raw.models };
   c.budget_usd = { ...DEFAULTS.budget_usd, ...raw.budget_usd };
   c.timeout_min = { ...DEFAULTS.timeout_min, ...raw.timeout_min };
   c.checks = c.checks.map((ch) => ({ locks: [], ...ch }));
@@ -438,21 +442,89 @@ export function lastResult(logFile) {
   return null;
 }
 
-export async function callClaude({ role, model, prompt, budget, timeoutMin, cwd, logFile, onSpawn }) {
+// Prompt caching. The cache reuses only an identical prefix (tools → system prompt → messages), so:
+// - the shared prefix moves the per-machine system-prompt sections (cwd, git status) into the first message, letting
+//   every call of one role and model share the cached system prompt instead of each worktree writing its own;
+// - the 1-hour TTL keeps that prefix, and a resumed coder's history, alive across checks, e2e and CI waits;
+// - coder resume continues the task's coder session between rounds, so its context is read back, not rewritten.
+// Measured 2026-11-05: a second call from another directory read 3.1k cached tokens instead of rewriting 4.7k, and a
+// resumed call wrote 0.7k. Each switch can be turned off for a run with its env var set to 0.
+const SHARED_PREFIX = process.env.CREW_SHARED_PREFIX !== '0';
+const CACHE_1H = process.env.CREW_CACHE_1H !== '0';
+export const CODER_RESUME = process.env.CREW_CODER_RESUME !== '0';
+
+// Tokens of one `claude -p` call, all models included (modelUsage covers the whole call; `usage` only its last turn).
+export function callUsage(result) {
+  const sum = { input: 0, output: 0, cache_write: 0, cache_write_1h: 0, cache_read: 0 };
+  for (const m of Object.values(result?.modelUsage ?? {})) {
+    sum.input += m.inputTokens ?? 0;
+    sum.output += m.outputTokens ?? 0;
+    sum.cache_write += m.cacheCreationInputTokens ?? 0;
+    sum.cache_write_1h += m.cacheCreationEphemeral1hInputTokens ?? 0;
+    sum.cache_read += m.cacheReadInputTokens ?? 0;
+  }
+  return sum;
+}
+
+// `cost.jsonl`: one line per `claude -p` call (coder, reviewer, triage), append-only, so replans and restarts never
+// lose spend. `crew status`, `crew cost` and the dashboard read it.
+const costFile = (run) => join(runDir(run), 'cost.jsonl');
+export function recordCost(run, entry) {
+  mkdirSync(runDir(run), { recursive: true });
+  appendFileSync(costFile(run), JSON.stringify({ ts: now(), ...entry }) + '\n');
+}
+export function readCosts(run) {
+  const file = costFile(run);
+  return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+}
+// Totals per key (e.g. task, or task/role/model) for cost entries.
+export function sumCosts(entries, keyOf) {
+  const out = new Map();
+  for (const e of entries) {
+    const k = keyOf(e);
+    const t = out.get(k) ?? { calls: 0, cost: 0, input: 0, output: 0, cache_write: 0, cache_read: 0 };
+    t.calls += 1;
+    t.cost += e.cost ?? 0;
+    for (const f of ['input', 'output', 'cache_write', 'cache_read']) t[f] += e.tokens?.[f] ?? 0;
+    out.set(k, t);
+  }
+  return out;
+}
+
+// A resumed session reports cost and tokens for the whole session so far (measured 2026-11-05), so a call's own share
+// is the difference from that session's last ledger entry.
+export function callShare(total, prior) {
+  if (!prior) return total;
+  const tokens = Object.fromEntries(Object.entries(total.tokens).map(([k, v]) => [k, Math.max(0, v - (prior.tokens?.[k] ?? 0))]));
+  return { cost: Math.max(0, total.cost - prior.cost), tokens };
+}
+
+export async function callClaude({ role, model, prompt, budget, timeoutMin, cwd, logFile, onSpawn, resume = null, ledger = null }) {
+  if (resume && !ledger) throw new Error('a resumed call needs the ledger to separate its cost from the session total');
   const { tools, disallowed } = ROLE_TOOLS[role];
+  const prior = resume ? readCosts(ledger.run).findLast((e) => e.session === resume)?.session_total ?? null : null;
+  // The cap stays per call even if the CLI applies it to the session total.
+  const cap = budget + (prior?.cost ?? 0);
   // --strict-mcp-config with no --mcp-config: no MCP servers, so the role sees only the tools listed here.
-  const args = ['-p', '--model', model, '--permission-mode', 'auto', '--max-budget-usd', String(budget), '--strict-mcp-config',
+  const args = ['-p', '--model', model, '--permission-mode', 'auto', '--max-budget-usd', String(cap), '--strict-mcp-config',
     '--append-system-prompt-file', join(SKILL, 'prompts', `${role}.md`),
     '--output-format', 'stream-json', '--verbose', '--json-schema', JSON.stringify(SCHEMAS[role]),
     '--tools', tools.join(','), '--disallowedTools', disallowed.join(','),
+    ...(SHARED_PREFIX ? ['--exclude-dynamic-system-prompt-sections'] : []),
+    ...(resume ? ['--resume', resume] : []),
     ...(role === 'triage' ? [] : ['--settings', JSON.stringify(sandboxSettings(cwd))])];
-  const r = await run('claude', args, { cwd, input: prompt, logFile, timeoutMin, onSpawn });
+  const env = CACHE_1H ? { ENABLE_PROMPT_CACHING_1H: '1' } : undefined;
+  const r = await run('claude', args, { cwd, input: prompt, logFile, timeoutMin, onSpawn, env });
   const result = lastResult(logFile);
   const output = result?.structured_output ?? null;
+  const total = { cost: result?.total_cost_usd ?? 0, tokens: callUsage(result) };
+  const { cost, tokens } = callShare(total, prior);
+  if (ledger) recordCost(ledger.run, { ...ledger, role, model, resumed: Boolean(resume), session: result?.session_id ?? null, cost, tokens, session_total: total });
   return {
     ok: Boolean(output) && !result.is_error,
     output,
-    cost: result?.total_cost_usd ?? 0,
+    cost,
+    session: result?.session_id ?? null,
     failure: output ? null : r.timedOut ? 'timeout' : result?.subtype && result.subtype !== 'success' ? result.subtype : 'no structured output',
   };
 }

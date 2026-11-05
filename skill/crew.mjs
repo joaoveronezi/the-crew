@@ -13,13 +13,14 @@
 //   merge <run> <task>                  re-check, squash-merge into the base branch with the report, update the issue
 //   wrapup <run>                        apply merged contracts' docs edits, run the docs check, commit
 //   watch <run> <task>                  follow a driver live (driver log + the current coder/reviewer call)
+//   cost <run>                          spend per task, role and model from cost.jsonl, with cache reads vs writes
 //   stop <run>                          stop orchestrators and drivers; nothing is merged
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { join, relative } from 'node:path';
 import {
   CONFIG_FILE, DONE_FOR_DEPENDANTS, ROOT, SKILL, appendEvent, cfg, contractPath, git, isRunning, killGroup, lastStatus, loadBatch,
-  npmScriptsReferenced, orderingErrors, readEvents, readJson, runDir, shapeErrors, shell, sleep, tryGit, withDefaults, withTrailer, worktreeOf,
+  npmScriptsReferenced, orderingErrors, readCosts, readEvents, readJson, runDir, shapeErrors, shell, sleep, sumCosts, tryGit, withDefaults, withTrailer, worktreeOf,
 } from './lib.mjs';
 import { issueErrors, issueTracker } from './issues.mjs';
 
@@ -28,7 +29,8 @@ const NO_RUN = new Set(['doctor', 'issues']);
 const run = NO_RUN.has(cmd) ? null : args[0];
 const rest = NO_RUN.has(cmd) ? args : args.slice(1);
 const die = (msg, code = 1) => { console.error(msg); process.exit(code); };
-if (!cmd || (!run && !NO_RUN.has(cmd))) die(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 17).join('\n'), 2);
+const usage = () => { const lines = readFileSync(new URL(import.meta.url), 'utf8').split('\n'); return lines.slice(1, lines.findIndex((l) => l.startsWith('import'))).join('\n'); };
+if (!cmd || (!run && !NO_RUN.has(cmd))) die(usage(), 2);
 
 const listJson = (dir) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)) : []);
 const batchIds = () => listJson(join(runDir(run), 'batches'));
@@ -100,10 +102,13 @@ async function validate() {
 // Not errors, but worth a second look: the same model reviewing its own kind of output makes correlated mistakes.
 function warnings() {
   const rank = { haiku: 0, sonnet: 1, opus: 2 };
+  const security = new RegExp(cfg().securityPaths, 'i');
   return taskIds().map(contract).flatMap((c) => {
     const [coder, reviewer] = [rank[c.models?.coder], rank[c.models?.reviewer]];
     if (reviewer < coder) return [`${c.id}: reviewer (${c.models.reviewer}) is weaker than the coder (${c.models.coder})`];
     if (reviewer === coder) return [`${c.id}: coder and reviewer are both ${c.models.coder}; use a stronger reviewer for security, auth or data work`];
+    // An Opus review is usually the most expensive call in a run; the default reviewer is Sonnet.
+    if (c.models.reviewer === 'opus' && !c.allowed_files.some((f) => security.test(f.path))) return [`${c.id}: opus reviewer on files that don't look security, auth or data shaped (securityPaths); sonnet is the default`];
     return [];
   });
 }
@@ -218,15 +223,19 @@ const commands = {
 
   status() {
     const events = readEvents(run);
+    // The ledger includes triage and survives replans; runs from before it fall back to each driver's own total.
+    const spent = sumCosts(readCosts(run), (e) => e.task);
+    const costOf = (id) => spent.get(id)?.cost ?? readJson(join(runDir(run), 'drivers', `${id}.json`), {}).cost ?? null;
     const rows = [['task', 'issue', 'batch', 'state', 'phase', 'round', 'cost $', 'driver', 'updated']];
     for (const id of taskIds()) {
       const c = contract(id);
       const s = readJson(join(runDir(run), 'drivers', `${id}.json`), {});
-      rows.push([id, String(c.issue ?? '-'), c.batch, state(events, id), s.phase ?? '-', String(s.round ?? '-'), s.cost != null ? s.cost.toFixed(2) : '-', isRunning(s.proc) ? `pid ${s.proc.pid}` : '-', s.updated ?? '-']);
+      const cost = costOf(id);
+      rows.push([id, String(c.issue ?? '-'), c.batch, state(events, id), s.phase ?? '-', String(s.round ?? '-'), cost != null ? cost.toFixed(2) : '-', isRunning(s.proc) ? `pid ${s.proc.pid}` : '-', s.updated ?? '-']);
     }
     const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
     rows.forEach((r) => console.log(r.map((v, i) => v.padEnd(widths[i])).join('  ')));
-    const total = taskIds().reduce((sum, id) => sum + (readJson(join(runDir(run), 'drivers', `${id}.json`), {}).cost ?? 0), 0);
+    const total = taskIds().reduce((sum, id) => sum + (costOf(id) ?? 0), 0);
     console.log(`total $${total.toFixed(2)}`);
     for (const b of batchIds()) {
       const o = readJson(join(runDir(run), `orch-${b}.json`), {});
@@ -345,6 +354,20 @@ const commands = {
       if (current) show(current, renderCall);
       await sleep(1000);
     }
+  },
+
+  cost() {
+    const entries = readCosts(run);
+    if (!entries.length) die(`no cost.jsonl entries for ${run}`);
+    const k = (n) => `${Math.round(n / 1000)}k`;
+    // read share: how much of the prompt came from the cache rather than being written or sent fresh
+    const hit = (t) => `${Math.round((100 * t.cache_read) / Math.max(1, t.cache_read + t.cache_write + t.input))}%`;
+    const rows = [['task', 'role', 'model', 'calls', 'cost $', 'cache write', 'cache read', 'read share']];
+    const add = (label, t) => rows.push([...label, String(t.calls), t.cost.toFixed(2), k(t.cache_write), k(t.cache_read), hit(t)]);
+    for (const [key, t] of sumCosts(entries, (e) => `${e.task}\t${e.role}\t${e.model}`)) add(key.split('\t'), t);
+    add(['total', '', ''], sumCosts(entries, () => 'all').get('all'));
+    const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
+    rows.forEach((r) => console.log(r.map((v, i) => v.padEnd(widths[i])).join('  ')));
   },
 
   stop() {

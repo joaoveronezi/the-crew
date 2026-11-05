@@ -12,6 +12,7 @@ description: Run a batch of this project's issues with a three-tier crew — thi
 /crew rehearse <run-id>         # copy of the run as a dry run: real coder ↔ reviewer rounds, never merged
 /crew run <run-id>              # launch a saved plan
 /crew status <run-id>           # task table + cost; changes nothing
+/crew cost <run-id>             # spend per task, role and model, with cache reads vs writes
 /crew stop <run-id>
 /crew resume <run-id>
 ```
@@ -23,7 +24,7 @@ description: Run a batch of this project's issues with a three-tier crew — thi
 | **Boss** | this session (best on Opus) | adapt, plan, contracts, replans, merge veto, escalations, the user |
 | **Orchestrator** | `orchestrator.mjs`, one detached process per batch | none. On failures it calls a `claude -p` **triage** that diagnoses and may repair the environment |
 | **Driver** | `driver.mjs`, one detached process per task | none. It is the loop between the coder and the reviewer |
-| **Coder** | `claude -p` + [prompts/coder.md](prompts/coder.md), fresh each round, OS-sandboxed | implements / repairs |
+| **Coder** | `claude -p` + [prompts/coder.md](prompts/coder.md), resumed across one contract version's rounds, OS-sandboxed | implements / repairs |
 | **Reviewer** | `claude -p` + [prompts/reviewer.md](prompts/reviewer.md), fresh each round, OS-sandboxed, read-only | contract adherence, judgment ACs, code review |
 
 Before planning, read [protocol.md](references/protocol.md) (who decides what, states, the driver loop), [contract.md](references/contract.md) (prose template) and [contract-json.md](references/contract-json.md) (machine contract).
@@ -61,7 +62,7 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
    - `contracts/<id>.json`: from [contract-json.md](references/contract-json.md). Every command-provable AC goes in `checks`. Docs edits go in `docs` with exact `find` anchors. `issue` is the tracker's id.
    - `batches/<batch>.json`: group by area or dependency chain. Use one batch by default; `max_parallel` is 2 by default.
    - `PLAN.md`: queue, dependency graph, batches, tiers with a one-line reason each, gaps, and decisions the user should confirm.
-3. `crew validate <run>` and fix every problem. Read the `!` warnings: a reviewer no stronger than its coder makes correlated mistakes.
+3. `crew validate <run>` and fix every problem. Read the `!` warnings: a reviewer no stronger than its coder makes correlated mistakes. The default pair is a Haiku coder and a Sonnet reviewer; raise the coder to Sonnet when the contract leaves real decisions to it, and keep Opus reviewers for security, auth and data work.
 4. Show the queue, batches, tiers, decisions and gaps in one short message. Unless the user said `plan-only`, continue into **Run** in the same turn. Invoking `/crew` on issues authorizes the whole local pipeline: worktrees, commits, local merges into the base branch, issue status updates. It never authorizes pushing, deploying or touching anything outside this machine.
 
 `rehearse <run>`: copy the run to `<run>-rehearsal` with `"dry_run": true` in every batch, then run it. Drivers do real rounds but are never merged. Afterwards remove the rehearsal's worktrees and branches.

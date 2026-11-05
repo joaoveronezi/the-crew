@@ -12,7 +12,7 @@ What the driver executes and `crew validate` checks. It must agree with the pros
   "batch": "api",
   "depends_on": [],
   "branch": "crew/EXPORT-1-orders-csv",
-  "models": { "coder": "sonnet", "reviewer": "opus" },
+  "models": { "coder": "sonnet", "reviewer": "sonnet" },
   "allowed_files": [
     { "path": "src/routes/orders.ts", "op": "edit" },
     { "path": "test/orders-csv.test.ts", "op": "create" }
@@ -44,9 +44,9 @@ What the driver executes and `crew validate` checks. It must agree with the pros
 | `gates` | Commands that must exit 0. `npm run X` scripts must exist on the base |
 | `locks` | Locks held for the coder and every check (names from the config) |
 | `depends_on` | Required when two tasks share a file or a `sensitivePaths` area (`validate` enforces it) |
-| `models` | `haiku` only when every step is literal; `sonnet` for wiring, tests or UI; a reviewer stronger than the coder (`validate` warns otherwise); `opus` to review security, auth or data work |
+| `models` | Default `{ "coder": "haiku", "reviewer": "sonnet" }`. `haiku` codes only when every step is literal; `sonnet` for wiring, tests or UI. Keep the reviewer stronger than the coder (`validate` warns otherwise). `opus` reviews only security, auth or data work: it is usually the most expensive call in a run, and `validate` warns when the allowed files match none of `securityPaths` |
 | `max_rounds` | Hard cap on coder → reviewer rounds (1–5). A finding marked `not_fixed` twice stops the task sooner. Merge-conflict rounds don't count |
-| `budget_usd` | `--max-budget-usd` per call. An overrun → `escalate` |
+| `budget_usd` | `--max-budget-usd` per call (a resumed coder call is capped at its own spend, not the session's). An overrun → `escalate` |
 | `close_issue` / `manual_acceptance` | `close_issue: false` or a manual acceptance note keeps the issue `in_progress` after the merge (state `needs_human`) |
 | `commit` | The squash commit's subject. The task report becomes its body |
 | `docs` | Applied by `crew wrapup`. `find` must occur exactly once on the base. Placeholders: `{merge}` `{evidence}` `{issue}` `{task}` |
