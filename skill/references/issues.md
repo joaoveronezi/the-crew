@@ -49,6 +49,17 @@ Users can download their orders as CSV.
 
 Headings may be `## 12: Title`, `## [AUTH-1] Title`, `## #12 Title` or `## 12 — Title`. The status line is `Status: …`, `**Status:** …` or `**Status: …**` (the colon is required). Write-back replaces the status value, keeping the formatting, and appends `- Log <date>: <note>` at the end of the section.
 
+## GitHub Issues
+
+`"issues": { "github": true }` (or `{ "github": { "repo": "owner/name" } }`) reads the repository's issues through the `gh` CLI, which must be authenticated. The id is the issue number. Open issues are `open` and closed ones `done`. Dependencies come from lines like `Depends on #9, #10` (or `**Depends on:** #9`) in the issue body.
+
+Write-back changes nothing in the repository:
+- A note becomes an issue comment, with a hidden marker so the same note is never posted twice.
+- `done` closes the issue.
+- `in_progress` is recorded as a comment, because GitHub has no status field for it.
+
+With the GitHub delivery mode the PR body also says `Closes #<n>`, so merging the PR closes the issue too.
+
 ## Anything else: an adapter
 
 For a `TODO.md` checklist, a CSV, a roadmap doc or a tracker export, `/crew adapt` writes `.claude/crew/issues-adapter.mjs` from `templates/issues-adapter.mjs`. It exports `listIssues(root)` and `updateIssue(root, id, { status, note })`. It must be plain deterministic parsing (no network, no model calls), and it changes only the status and the note. `crew issues --check` validates whatever it returns.

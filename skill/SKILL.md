@@ -40,8 +40,9 @@ Goal: a `.claude/crew.config.json` that is true for this project, and a way to r
    - lockfiles, migrations and API specs that two tasks must never change in parallel (`sensitivePaths`);
    - secret files such as `.env*`;
    - hosts that test commands need (`network.allowedDomains`).
-2. **Find how the project exposes its issues.** Look for `issues.json`, `issues/`, `issues.md`, then anything else: `TODO.md`, `BACKLOG.md`, `docs/roadmap*`, `*.csv`, a `tasks.json`, checklists in the README, a tracker export. Pick the one the user maintains. If there are several or none, ask the user.
+2. **Find how the project exposes its issues.** Look for `issues.json`, `issues/`, `issues.md`, GitHub Issues (`gh issue list` works and the project uses it), then anything else: `TODO.md`, `BACKLOG.md`, `docs/roadmap*`, `*.csv`, a `tasks.json`, checklists in the README, a tracker export. Pick the one the user maintains. If there are several or none, ask the user.
    - **One of the built-in formats** ([issues.md](references/issues.md)) → set `issues.file`.
+   - **GitHub Issues** → set `issues.github: true` (or `{ "repo": "owner/name" }`). `gh` must be authenticated (`gh auth status`).
    - **Anything else** → write a deterministic adapter. Copy [templates/issues-adapter.mjs](templates/issues-adapter.mjs) to `.claude/crew/issues-adapter.mjs` and rewrite `listIssues`/`updateIssue` for this file's real layout. Plain parsing only: no network, no model calls. Change only status and notes when writing. Set `issues.adapter` to its path, and `issues.file` to the file it reads, so tasks can never edit it.
    - **No issues anywhere** → offer to create `issues.json` (or the format the user prefers) and seed it with what they describe.
    - **Read-only sources** (a generated export) → `issues.writeBack: false`.

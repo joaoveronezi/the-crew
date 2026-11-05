@@ -1,8 +1,11 @@
-// Local issue tracker: the project's issues live in one of three plain-file formats (references/issues.md).
+// Issue tracker: the project's issues live in one of three plain-file formats (references/issues.md), in GitHub
+// Issues, or anywhere else behind a project adapter.
 //   issues.json    an array (or { "issues": [...] }) of { id, title, status, ... }
 //   issues/        one markdown file per issue, with front matter (id, title, status, priority, depends_on)
 //   issues.md      one markdown file, one "## <id>: <title>" section per issue with a "Status:" line
 // The crew only ever changes an issue's status and appends a log line; everything else stays as the user wrote it.
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
@@ -146,6 +149,10 @@ export function updateIssue(source, id, change) {
 //   updateIssue(root, id, change)    → path of the file it changed, or null when the source is read-only
 // and the crew calls nothing else. Built-in formats need no adapter.
 export async function issueTracker(root, issues) {
+  if (issues.github) {
+    const t = githubTracker(issues.github === true ? {} : issues.github);
+    return { ...t, update: async (id, change) => (issues.writeBack === false ? null : t.update(id, change)) };
+  }
   if (issues.adapter) {
     const { pathToFileURL } = await import('node:url');
     const mod = await import(pathToFileURL(join(root, issues.adapter)).href);
@@ -160,6 +167,44 @@ export async function issueTracker(root, issues) {
     kind: `${source.kind} ${issues.file}`,
     list: async () => listIssues(source).map(normalizeIssue),
     update: async (id, change) => (issues.writeBack === false ? null : updateIssue(source, id, change)),
+  };
+}
+
+// ---- GitHub Issues ------------------------------------------------------------------------------------------------
+
+// GitHub Issues through the `gh` CLI, authenticated for the project's repository. Reading needs no judgment: gh
+// returns JSON. Dependencies come from "Depends on #9, #10" lines in the body. GitHub has no in-progress status, so
+// `in_progress` is recorded as a comment; `done` closes the issue. Every note is posted once (a hidden marker makes a
+// retried call a no-op), and nothing in the repository changes, so update() returns null.
+const ghCli = (args, root) => execFileSync('gh', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+export function parseGithubIssues(json) {
+  return JSON.parse(json).map((i) => ({
+    id: String(i.number),
+    title: i.title,
+    status: i.state === 'CLOSED' ? 'done' : 'open',
+    labels: (i.labels ?? []).map((l) => l.name),
+    depends_on: [...String(i.body ?? '').matchAll(/^\s*\**depends on\**:?\s*(.+)$/gim)].flatMap((m) => [...m[1].matchAll(/#(\d+)/g)].map((d) => d[1])),
+    body: i.body ?? '',
+  }));
+}
+export function githubTracker({ repo = null, limit = 1000 } = {}, { root = process.cwd(), gh = ghCli } = {}) {
+  const target = repo ? ['--repo', repo] : [];
+  return {
+    kind: `github issues${repo ? ` ${repo}` : ''}`,
+    list: async () => parseGithubIssues(gh(['issue', 'list', ...target, '--state', 'all', '--limit', String(limit), '--json', 'number,title,state,labels,body'], root)).map(normalizeIssue),
+    update: async (id, { status, note }) => {
+      const text = note ?? (status ? `crew: ${status.replace('_', ' ')}` : null);
+      if (text) {
+        const tag = `<!-- crew:${createHash('sha1').update(`${id}:${status ?? ''}:${text}`).digest('hex').slice(0, 12)} -->`;
+        const seen = gh(['issue', 'view', String(id), ...target, '--json', 'comments', '--jq', '.comments[].body'], root);
+        if (!seen.includes(tag)) gh(['issue', 'comment', String(id), ...target, '--body', `${text}\n\n${tag}`], root);
+      }
+      if (status === 'done') {
+        const state = gh(['issue', 'view', String(id), ...target, '--json', 'state', '--jq', '.state'], root);
+        if (state !== 'CLOSED') gh(['issue', 'close', String(id), ...target], root);
+      }
+      return null;
+    },
   };
 }
 

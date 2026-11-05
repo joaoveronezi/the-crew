@@ -10,6 +10,7 @@ import {
 import {
   issueErrors, normalizeIssue, parseFrontMatter, parseJsonIssues, parseMdIssues, updateFrontMatterIssue, updateJsonIssues, updateMdIssue,
 } from '../skill/issues.mjs';
+import { githubTracker, parseGithubIssues } from '../skill/issues.mjs';
 import * as todoAdapter from '../skill/templates/issues-adapter.mjs';
 
 const contract = (over = {}) => withDefaults({
@@ -184,4 +185,32 @@ test('cost totals group ledger entries by key, triage included', () => {
   assert.equal(byTask.get('A').cost, 0.8);
   assert.equal(byTask.get('A').cache_read, 1890);
   assert.equal(byTask.get('B').cost, 1);
+});
+
+test('github issues: state, dependencies from the body, and idempotent write-back', async () => {
+  const listed = JSON.stringify([
+    { number: 12, title: 'Add CSV export', state: 'OPEN', labels: [{ name: 'P1' }], body: 'Users export orders.\n\nDepends on #9, #10' },
+    { number: 9, title: 'Store exports', state: 'CLOSED', labels: [], body: '' },
+    { number: 10, title: 'Export button', state: 'OPEN', labels: [], body: '**Depends on:** #9' },
+  ]);
+  assert.deepEqual(parseGithubIssues(listed).map((i) => [i.id, i.status, i.depends_on]), [['12', 'open', ['9', '10']], ['9', 'done', []], ['10', 'open', ['9']]]);
+
+  const calls = [];
+  const comments = [];
+  const gh = (args) => {
+    calls.push(args.join(' '));
+    if (args[1] === 'list') return listed;
+    if (args[1] === 'view' && args.includes('comments')) return comments.join('\n');
+    if (args[1] === 'view') return 'OPEN';
+    if (args[1] === 'comment') comments.push(args[args.indexOf('--body') + 1]);
+    return '';
+  };
+  const t = githubTracker({}, { gh });
+  assert.equal((await t.list()).length, 3);
+  assert.equal(await t.update('12', { status: 'done', note: 'merged in abc1234' }), null, 'nothing in the repo changes');
+  await t.update('12', { status: 'done', note: 'merged in abc1234' });
+  assert.equal(comments.length, 1, 'the same note is posted once');
+  assert.equal(calls.filter((c) => c.startsWith('issue close 12')).length, 2, 'closed when still open');
+  await t.update('10', { status: 'in_progress' });
+  assert.match(comments[1], /^crew: in progress/);
 });
