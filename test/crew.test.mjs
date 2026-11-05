@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   checkTransition, fingerprint, identify, isRunning, npmScriptsReferenced, orderingErrors, outOfScope, outputKey, repeated,
-  reviewProgress, sandboxSettings, shapeErrors, taskState, withConfigDefaults, withDefaults, withTrailer, ROOT, callShare, callUsage, sumCosts,
+  reviewProgress, sandboxSettings, shapeErrors, taskState, withConfigDefaults, withDefaults, withTrailer, ROOT, callShare, callUsage, sumCosts, baseRef, isGithub, ROLE_TOOLS,
 } from '../skill/lib.mjs';
 import {
   issueErrors, normalizeIssue, parseFrontMatter, parseJsonIssues, parseMdIssues, updateFrontMatterIssue, updateJsonIssues, updateMdIssue,
@@ -213,4 +213,21 @@ test('github issues: state, dependencies from the body, and idempotent write-bac
   assert.equal(calls.filter((c) => c.startsWith('issue close 12')).length, 2, 'closed when still open');
   await t.update('10', { status: 'in_progress' });
   assert.match(comments[1], /^crew: in progress/);
+});
+
+test('delivery: local by default; github checks against the remote base branch', () => {
+  const local = withConfigDefaults({});
+  assert.equal(isGithub(local), false);
+  assert.equal(baseRef(local), 'main');
+  const github = withConfigDefaults({ baseBranch: 'trunk', delivery: { mode: 'github' } });
+  assert.equal(isGithub(github), true);
+  assert.equal(baseRef(github), 'origin/trunk');
+  assert.equal(github.delivery.prFooter, null, 'no PR attribution unless configured');
+  assert.equal(baseRef(withConfigDefaults({ delivery: { mode: 'github', remote: 'upstream' } })), 'upstream/main');
+});
+
+test('no role may act on the remote through gh', () => {
+  assert.ok(ROLE_TOOLS.coder.disallowed.includes('Bash(gh *)'));
+  assert.ok(ROLE_TOOLS.reviewer.disallowed.includes('Bash(gh *)'));
+  for (const sub of ['pr', 'issue', 'api', 'repo']) assert.ok(ROLE_TOOLS.triage.disallowed.includes(`Bash(gh ${sub} *)`));
 });

@@ -39,17 +39,26 @@ export const CONFIG_DEFAULTS = {
   network: { allowedDomains: ['registry.npmjs.org'] },
   docsCheck: null,
   commitTrailer: null,
+  // local: approved tasks are squash-merged into the base branch on this machine. github: each task is pushed as a PR
+  // and must pass CI; `crew merge` squash-merges the PR through gh.
+  delivery: { mode: 'local', remote: 'origin', prFooter: null },
   // validate warns about an Opus reviewer on a task whose allowed files match none of this (case-insensitive).
   securityPaths: 'auth|session|token|secret|security|crypto|password|permission|payment|migration',
 };
 export function withConfigDefaults(raw) {
-  return { ...CONFIG_DEFAULTS, ...raw, issues: { ...CONFIG_DEFAULTS.issues, ...raw.issues }, network: { ...CONFIG_DEFAULTS.network, ...raw.network } };
+  return {
+    ...CONFIG_DEFAULTS, ...raw,
+    issues: { ...CONFIG_DEFAULTS.issues, ...raw.issues },
+    network: { ...CONFIG_DEFAULTS.network, ...raw.network },
+    delivery: { ...CONFIG_DEFAULTS.delivery, ...raw.delivery },
+  };
 }
 let cached;
 export function cfg() {
   if (!cached) {
     if (!existsSync(CONFIG_FILE)) throw new Error(`no ${CONFIG_FILE}: run "/crew adapt" first`);
     cached = withConfigDefaults(JSON.parse(readFileSync(CONFIG_FILE, 'utf8')));
+    if (!['local', 'github'].includes(cached.delivery.mode)) throw new Error(`delivery.mode must be "local" or "github", not "${cached.delivery.mode}"`);
   }
   return cached;
 }
@@ -59,6 +68,9 @@ export function withTrailer(message, config = cfg()) {
   if (!config.commitTrailer) return message;
   return `${message}${message.includes('\n') ? '\n' : '\n\n'}${config.commitTrailer}`;
 }
+export const isGithub = (config = cfg()) => config.delivery.mode === 'github';
+// What task branches start from and are checked against: the remote's base branch when PRs are the delivery.
+export const baseRef = (config = cfg()) => (isGithub(config) ? `${config.delivery.remote}/${config.baseBranch}` : config.baseBranch);
 export const runDir = (run) => join(ROOT, cfg().stateDir, 'runs', run);
 export const worktreeOf = (id) => join(ROOT, cfg().worktreeDir, id);
 
@@ -94,6 +106,12 @@ export function git(cwd, ...args) {
 }
 export function tryGit(cwd, ...args) {
   try { return { ok: true, out: git(cwd, ...args) }; } catch (e) { return { ok: false, out: String(e.stderr || e.message).trim() }; }
+}
+export function gh(...args) {
+  return execFileSync('gh', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+export function tryGh(...args) {
+  try { return gh(...args); } catch { return null; }
 }
 export async function retry(fn, tries = 3, waitMs = 5000) {
   for (let i = 1; ; i++) {
@@ -176,7 +194,7 @@ export const DEFAULTS = {
   close_issue: true, manual_acceptance: null,
   models: { coder: 'haiku', reviewer: 'sonnet' },
   budget_usd: { coder: 5, reviewer: 2, triage: 1 },
-  timeout_min: { setup: 20, coder: 45, reviewer: 20, checks: 30 },
+  timeout_min: { setup: 20, coder: 45, reviewer: 20, checks: 30, ci: 45 },
 };
 export function withDefaults(raw) {
   const c = { ...DEFAULTS, ...raw };
@@ -395,9 +413,10 @@ export const SCHEMAS = {
 };
 const GIT_WRITES = ['commit', 'push', 'reset', 'checkout', 'switch', 'rebase', 'merge', 'stash', 'clean', 'restore', 'worktree', 'branch', 'tag'];
 export const ROLE_TOOLS = {
-  coder: { tools: ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob'], disallowed: GIT_WRITES.filter((c) => c !== 'restore').map((c) => `Bash(git ${c} *)`) },
-  reviewer: { tools: ['Read', 'Bash', 'Grep', 'Glob'], disallowed: [...GIT_WRITES, 'add', 'rm', 'mv', 'apply'].map((c) => `Bash(git ${c} *)`) },
-  triage: { tools: ['Read', 'Bash', 'Grep', 'Glob'], disallowed: [...GIT_WRITES, 'add', 'rm'].map((c) => `Bash(git ${c} *)`) },
+  // No role may use gh to act on the remote: pushes, PRs and issue updates belong to the driver and `crew merge`.
+  coder: { tools: ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob'], disallowed: [...GIT_WRITES.filter((c) => c !== 'restore').map((c) => `Bash(git ${c} *)`), 'Bash(gh *)'] },
+  reviewer: { tools: ['Read', 'Bash', 'Grep', 'Glob'], disallowed: [...[...GIT_WRITES, 'add', 'rm', 'mv', 'apply'].map((c) => `Bash(git ${c} *)`), 'Bash(gh *)'] },
+  triage: { tools: ['Read', 'Bash', 'Grep', 'Glob'], disallowed: [...[...GIT_WRITES, 'add', 'rm'].map((c) => `Bash(git ${c} *)`), 'Bash(gh pr *)', 'Bash(gh issue *)', 'Bash(gh api *)', 'Bash(gh repo *)'] },
 };
 
 // OS sandbox for coder and reviewer (Claude Code `sandbox` settings, passed per call with --settings). Bash and

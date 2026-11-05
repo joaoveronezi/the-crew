@@ -25,7 +25,7 @@ What the driver executes and `crew validate` checks. It must agree with the pros
   "locks": [],
   "max_rounds": 3,
   "budget_usd": { "coder": 5, "reviewer": 2, "triage": 1 },
-  "timeout_min": { "setup": 20, "coder": 45, "reviewer": 20, "checks": 30 },
+  "timeout_min": { "setup": 20, "coder": 45, "reviewer": 20, "checks": 30, "ci": 45 },
   "commit": "feat: CSV export of orders (EXPORT-1)",
   "close_issue": true,
   "manual_acceptance": null,

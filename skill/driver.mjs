@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Crew driver: the deterministic loop around one task's coder ↔ reviewer pair.
 //   node driver.mjs <run> <TASK-ID>
-// prepare → [code → verify (scope, commit, checks) → review] × rounds → sync with the base branch → report → ready_to_merge
+// prepare → [code → verify (scope, commit, checks) → review] × rounds → sync with the base branch
+//   → (github delivery: push + PR → CI) → report → ready_to_merge
 // Every step saves drivers/<id>.json first, so a killed driver relaunches where it stopped. The only judgment calls
-// are the coder and reviewer (`claude -p`); routing between them is fixed here. Everything stays local: no remote,
-// no push. The boss merges approved branches into the base branch (`crew merge`).
+// are the coder and reviewer (`claude -p`); routing between them is fixed here. With local delivery nothing leaves the
+// machine; with github delivery the driver pushes the branch and opens a PR. Either way the boss merges (`crew merge`).
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  CODER_RESUME, ROOT, appendEvent, callClaude, cfg, withTrailer, contractPath, fingerprint, formatFindings, git, identify, killGroup, loadContract, log, now,
+  CODER_RESUME, ROOT, appendEvent, baseRef, callClaude, cfg, gh, isGithub, tryGh, withTrailer, contractPath, fingerprint, formatFindings, git, identify, killGroup, loadContract, log, now,
   outOfScope, outputKey, readEvents, readJson, repeated, reviewProgress, retry, runDir, shell, taskState, tryGit, withLocks, worktreeOf, writeJson,
 } from './lib.mjs';
 
@@ -16,7 +17,11 @@ const [run, id] = process.argv.slice(2);
 if (!run || !id) { console.error('usage: driver.mjs <run> <TASK-ID>'); process.exit(2); }
 
 const DRY = process.env.CREW_DRY === '1'; // rehearsal: same rounds, but the boss never merges it
-const BASE = cfg().baseBranch;
+const BASE = baseRef(); // the remote's base branch with github delivery
+const GITHUB = isGithub();
+const REMOTE = cfg().delivery.remote;
+const AFTER_SYNC = GITHUB && !DRY ? 'publish' : 'handoff';
+const fetchBase = () => (GITHUB ? retry(() => git(ROOT, 'fetch', REMOTE, cfg().baseBranch)) : null);
 const c = loadContract(run, id);
 const wt = worktreeOf(id);
 const logs = join(runDir(run), 'logs', id);
@@ -67,6 +72,7 @@ function callFailed(role, failure) {
 }
 
 async function prepare() {
+  await fetchBase();
   // Drivers start side by side, and concurrent `git worktree add` calls collide on .git/config.lock: retry, re-checking.
   await retry(() => {
     if (existsSync(wt)) return;
@@ -185,11 +191,12 @@ ${previous}`;
 
 // The branch must contain the current base before hand-off, so what the boss merges is exactly what was checked.
 async function sync() {
+  await fetchBase();
   const base = git(ROOT, 'rev-parse', BASE);
-  if (tryGit(wt, 'merge-base', '--is-ancestor', base, 'HEAD').ok) return save({ phase: 'handoff' });
+  if (tryGit(wt, 'merge-base', '--is-ancestor', base, 'HEAD').ok) return save({ phase: AFTER_SYNC });
   const m = tryGit(wt, 'merge', '--no-edit', '-m', `Merge ${BASE} into ${c.branch}`, base);
   save({ base_sha: base });
-  if (m.ok) return save({ head: head(), phase: 'verify', after_verify: 'handoff' }); // clean merge: re-run checks only
+  if (m.ok) return save({ head: head(), phase: 'verify', after_verify: AFTER_SYNC }); // clean merge: re-run checks only
   const conflicted = git(wt, 'diff', '--name-only', '--diff-filter=U').split('\n').filter(Boolean);
   const outside = outOfScope(conflicted, c.allowed_files);
   if (outside.length) { git(wt, 'merge', '--abort'); stop('needs_replan', { reason: `${BASE} conflicts outside the allowlist: ${outside.join(', ')}` }); }
@@ -215,14 +222,62 @@ function report() {
   ].join('\n') + '\n';
 }
 
+// Github delivery: the report becomes the PR body. A PR is looked up by branch before one is created, so a driver that
+// died after `gh pr create` reuses it.
+function prBody() {
+  const tracker = cfg().issues.github;
+  const link = c.issue == null ? [] : tracker ? [`${c.keep_open ? 'Refs' : 'Closes'} #${c.issue}`] : [];
+  const footer = cfg().delivery.prFooter ? ['', cfg().delivery.prFooter] : [];
+  return [report().split('\n').slice(2).join('\n').trim(), ...(link.length ? ['', ...link] : []), ...footer].join('\n') + '\n';
+}
+
+async function publish() {
+  await retry(() => git(wt, 'push', '-u', REMOTE, c.branch));
+  const bodyFile = join(logs, 'pr-body.md');
+  writeFileSync(bodyFile, prBody());
+  const open = JSON.parse(gh('pr', 'list', '--head', c.branch, '--state', 'open', '--json', 'number'));
+  let pr = open[0]?.number;
+  if (pr) gh('pr', 'edit', String(pr), '--body-file', bodyFile);
+  else pr = Number(gh('pr', 'create', '--base', cfg().baseBranch, '--head', c.branch, '--title', c.commit, '--body-file', bodyFile).trim().split('/').pop());
+  save({ pr, head: head(), phase: 'ci' });
+}
+
+// Red CI is re-run once per head before it counts against the change, so a flaky job doesn't cost a round.
+async function ci() {
+  const sha = head();
+  let checks = [];
+  for (let i = 0; i < 10 && !checks.length; i++) { // checks can take a moment to register after a push
+    await shell(`gh pr checks ${st.pr} --watch --fail-fast --interval 30`, { cwd: ROOT, logFile: join(logs, `ci-${sha.slice(0, 7)}.log`), timeoutMin: c.timeout_min.ci, onSpawn });
+    try { checks = JSON.parse(gh('pr', 'checks', String(st.pr), '--json', 'name,bucket,link')); } catch { checks = []; }
+    if (!checks.length) await new Promise((r) => setTimeout(r, 30_000));
+  }
+  if (!checks.length) { save({ resume_phase: 'ci' }); stop('help', { reason: `no CI checks reported for PR #${st.pr}` }); }
+  const failed = checks.filter((ch) => ['fail', 'cancel'].includes(ch.bucket));
+  const pending = checks.filter((ch) => ch.bucket === 'pending');
+  if (!failed.length && pending.length) { save({ resume_phase: 'ci' }); stop('help', { reason: `CI still pending after ${c.timeout_min.ci} min: ${pending.map((p) => p.name).join(', ')}` }); }
+  if (!failed.length) return save({ phase: 'handoff' });
+  const runIds = [...new Set(failed.map((f) => f.link?.match(/runs\/(\d+)/)?.[1]).filter(Boolean))];
+  if (st.ci_rerun_for !== sha) {
+    runIds.forEach((r) => tryGh('run', 'rerun', r, '--failed'));
+    save({ ci_rerun_for: sha });
+    return new Promise((r) => setTimeout(r, 60_000)); // let the re-run register before watching again
+  }
+  nextRound(failed.map((f) => {
+    const runId = f.link?.match(/runs\/(\d+)/)?.[1];
+    const out = (runId && tryGh('run', 'view', runId, '--log-failed')) || '';
+    const tailOut = out.split('\n').slice(-60).join('\n');
+    return { source: 'ci', key: `${f.name}#${outputKey(tailOut)}`, problem: `CI check "${f.name}" failed twice on ${sha.slice(0, 7)}`, output: tailOut };
+  }));
+}
+
 function handoff() {
   const file = join(runDir(run), 'reports', `${id}.md`);
   writeJson(file + '.json', { head: head() }); // ensures the folder exists
   writeFileSync(file, report());
-  stop('ready_to_merge', { head: head(), rounds: st.round, keep_open: c.keep_open, cost_usd: Math.round(st.cost * 100) / 100, review_notes: st.review?.non_blocking?.length ?? 0, report: file, dry_run: DRY });
+  stop('ready_to_merge', { head: head(), pr: st.pr ?? null, rounds: st.round, keep_open: c.keep_open, cost_usd: Math.round(st.cost * 100) / 100, review_notes: st.review?.non_blocking?.length ?? 0, report: file, dry_run: DRY });
 }
 
-const PHASES = { prepare, code, verify, review, sync, handoff };
+const PHASES = { prepare, code, verify, review, sync, publish, ci, handoff };
 try {
   log(`driver ${id} v${c.version} start: phase=${st.phase} round=${st.round}${DRY ? ' (dry run)' : ''}`);
   save();

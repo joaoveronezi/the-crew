@@ -5,7 +5,7 @@
 | responsibility | control | where |
 | --- | --- | --- |
 | adapting to the project, plan, contracts, acceptance criteria | LLM | boss (the session) |
-| reading issues | deterministic | `crew issues` (built-in formats or the project's adapter) |
+| reading issues | deterministic | `crew issues` (built-in formats, GitHub Issues through `gh`, or the project's adapter) |
 | contract validation (paths, ordering, scripts, docs anchors, issue ids) | deterministic | `crew validate` |
 | scheduling (dependencies, free slots) | deterministic | `orchestrator.mjs` |
 | worktree, branch, setup | deterministic | `driver.mjs` prepare |
@@ -15,11 +15,12 @@
 | contract adherence, judgment ACs, code review | LLM | reviewer (`claude -p`, sandboxed, read-only) |
 | failure → next round, round cap, stop on no progress | deterministic | `driver.mjs` |
 | merging the base into the branch | deterministic; LLM resolves conflicts | `driver.mjs` sync → coder |
+| github delivery: push, PR, CI wait, one CI re-run per head | deterministic | `driver.mjs` publish / ci |
 | stall/crash detection | deterministic | `orchestrator.mjs` (pid + start time + heartbeat) |
 | stall/crash diagnosis, environment repair | LLM | triage (`claude -p`) |
-| merge eligibility | deterministic | `crew merge-check` |
+| merge eligibility | deterministic | `crew merge-check` (local: branch tip, base, main folder; github: PR head, green checks, mergeability) |
 | final merge decision (veto only) | LLM | boss |
-| squash merge, issue status, docs | deterministic | `crew merge`, `crew wrapup` |
+| squash merge, issue status, docs | deterministic | `crew merge`, `crew wrapup` (github: through the PR, and one docs PR) |
 
 The boss can veto a merge that passed every gate, but can never override a failed gate: `crew merge` re-checks eligibility and refuses.
 
@@ -54,10 +55,12 @@ none ─┬─> ready_to_merge ─┬─> merged | needs_human            (boss:
 ## Driver loop
 
 ```text
-prepare ─> code ─> verify ─> review ─> sync ─> report ─> ready_to_merge
-             ^       │         │        │
-             └───────┴─────────┴────────┘  findings (scope | check | review | conflict)
+prepare ─> code ─> verify ─> review ─> sync ─┬───────────────────────> report ─> ready_to_merge   (local)
+             ^       │         │        │      └─> publish ─> ci ──────> report ─> ready_to_merge   (github)
+             └───────┴─────────┴────────┴────────────────────┘  findings (scope | check | review | conflict | ci)
 ```
+
+- **Delivery.** With `delivery.mode: "local"` (the default) nothing leaves the machine: the branch is checked against the local base branch and `crew merge` squash-merges it there. With `"github"`, branches start from `<remote>/<base>`, and after approval the driver pushes, opens or updates a PR (the report is its body, plus `Closes #n` for GitHub Issues), and waits for CI. Red CI is re-run once per head before it becomes a `ci` finding. `crew merge` squash-merges the PR through `gh` at the approved head. A file-based tracker's status changes are queued and land in the wrapup PR, so nothing is committed straight to the base branch.
 
 - **Rounds.** Round k is one coder call plus one reviewer call. The coder resumes its own session across the rounds of one contract version, so its earlier context is read from the prompt cache instead of being rewritten; a replan, or a retry after a failed coder call, starts a fresh session. The reviewer is a fresh `claude -p` every round and sees only the previous round's blocking findings, never the coder's account of its work.
 - **Prompt cache.** Every call runs with `--exclude-dynamic-system-prompt-sections`, so all calls of one role and model share one cached system prompt across worktrees, and with the 1-hour cache TTL (`ENABLE_PROMPT_CACHING_1H`), so it outlives checks and waits. `CREW_SHARED_PREFIX=0`, `CREW_CACHE_1H=0` and `CREW_CODER_RESUME=0` each turn one off for a run.

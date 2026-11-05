@@ -10,8 +10,8 @@
 //   follow <run> [type,type...]         stream new events, one line each (for the Monitor tool)
 //   event <run> <type> <task> [json]    append a boss event (retry, replanned, abandoned, blocked, …)
 //   merge-check <run> <task>            deterministic merge eligibility; exit 0 when eligible, 3 when it needs a sync
-//   merge <run> <task>                  re-check, squash-merge into the base branch with the report, update the issue
-//   wrapup <run>                        apply merged contracts' docs edits, run the docs check, commit
+//   merge <run> <task>                  re-check, squash-merge (locally, or the PR with github delivery), update the issue
+//   wrapup <run>                        apply merged contracts' docs edits, run the docs check, commit (github: open a PR)
 //   watch <run> <task>                  follow a driver live (driver log + the current coder/reviewer call)
 //   cost <run>                          spend per task, role and model from cost.jsonl, with cache reads vs writes
 //   stop <run>                          stop orchestrators and drivers; nothing is merged
@@ -19,7 +19,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { execFileSync, spawn } from 'node:child_process';
 import { join, relative } from 'node:path';
 import {
-  CONFIG_FILE, DONE_FOR_DEPENDANTS, ROOT, SKILL, appendEvent, cfg, contractPath, git, isRunning, killGroup, lastStatus, loadBatch,
+  CONFIG_FILE, DONE_FOR_DEPENDANTS, ROOT, SKILL, appendEvent, baseRef, cfg, gh, isGithub, tryGh, contractPath, git, isRunning, killGroup, lastStatus, loadBatch,
   npmScriptsReferenced, orderingErrors, readCosts, readEvents, readJson, runDir, shapeErrors, shell, sleep, sumCosts, tryGit, withDefaults, withTrailer, worktreeOf,
 } from './lib.mjs';
 import { issueErrors, issueTracker } from './issues.mjs';
@@ -36,10 +36,10 @@ const listJson = (dir) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.en
 const batchIds = () => listJson(join(runDir(run), 'batches'));
 const taskIds = () => listJson(join(runDir(run), 'contracts'));
 const contract = (id) => withDefaults(readJson(contractPath(run, id)));
-const atBase = (path) => tryGit(ROOT, 'cat-file', '-e', `${cfg().baseBranch}:${path}`).ok;
+const atBase = (path) => tryGit(ROOT, 'cat-file', '-e', `${baseRef()}:${path}`).ok;
 // Raw file content on the base branch: not trimmed, so anchors that end with a newline still match.
 const showBase = (path) => {
-  try { return { ok: true, out: execFileSync('git', ['-C', ROOT, 'show', `${cfg().baseBranch}:${path}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) }; } catch { return { ok: false, out: '' }; }
+  try { return { ok: true, out: execFileSync('git', ['-C', ROOT, 'show', `${baseRef()}:${path}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) }; } catch { return { ok: false, out: '' }; }
 };
 const state = (events, id) => lastStatus(events, id)?.type ?? 'none';
 const tracker = () => issueTracker(ROOT, cfg().issues);
@@ -49,6 +49,7 @@ const issuePaths = () => [cfg().issues.file, cfg().issues.adapter].filter(Boolea
 async function validate() {
   const config = cfg();
   const errors = [];
+  if (isGithub(config)) tryGit(ROOT, 'fetch', config.delivery.remote, config.baseBranch);
   const batches = Object.fromEntries(batchIds().map((b) => [b, loadBatch(run, b)]));
   const ids = taskIds();
   if (!ids.length) errors.push('no contracts/*.json');
@@ -124,6 +125,7 @@ function mergeCheck(id) {
   if (last?.type !== 'ready_to_merge') return { eligible: false, reasons: [`state is ${last?.type ?? 'none'}, not ready_to_merge`] };
   const { head, dry_run: dry } = last.data;
   if (dry) return { eligible: false, reasons: ['rehearsal (dry run): never merged'] };
+  if (isGithub()) return prMergeCheck(c, last, events);
   // A crash after the squash commit but before the event: finish recording instead of merging twice.
   const already = mergedCommit(id);
   if (already) return { eligible: true, alreadyMerged: already, reasons: [], head, keepOpen: last.data.keep_open };
@@ -144,12 +146,93 @@ function mergeCheck(id) {
   return { eligible: reasons.length === 0, reasons, needsSync, head, keepOpen: last.data.keep_open };
 }
 
+// Github delivery: eligibility is the PR's. It must be open at the approved head, with every check green and GitHub
+// reporting it mergeable. A PR merged at that head just before a crash is recorded rather than refused.
+function prMergeCheck(c, last, events) {
+  const { head, pr } = last.data;
+  if (!pr) return { eligible: false, reasons: ['no PR recorded for this task'] };
+  const view = JSON.parse(gh('pr', 'view', String(pr), '--json', 'state,headRefOid,mergeable,mergeStateStatus,statusCheckRollup,mergeCommit'));
+  if (view.state === 'MERGED' && view.headRefOid === head) return { eligible: true, alreadyMerged: view.mergeCommit?.oid, reasons: [], head, pr, keepOpen: last.data.keep_open };
+  const reasons = [];
+  for (const dep of c.depends_on) if (!DONE_FOR_DEPENDANTS.has(state(events, dep))) reasons.push(`dependency ${dep} is ${state(events, dep)}`);
+  if (view.state !== 'OPEN') reasons.push(`PR #${pr} is ${view.state}`);
+  if (view.headRefOid !== head) reasons.push(`PR head ${view.headRefOid.slice(0, 7)} ≠ approved head ${head.slice(0, 7)}`);
+  const checks = view.statusCheckRollup ?? [];
+  if (!checks.length) reasons.push('no CI checks');
+  const notGreen = checks.filter((ch) => !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(ch.conclusion ?? ch.state));
+  if (notGreen.length) reasons.push(`checks not green: ${notGreen.map((ch) => `${ch.name ?? ch.context}=${ch.conclusion || ch.status || ch.state}`).join(', ')}`);
+  const needsSync = view.mergeable === 'CONFLICTING' || ['BEHIND', 'DIRTY'].includes(view.mergeStateStatus);
+  if (needsSync) reasons.push(`PR #${pr} needs ${cfg().baseBranch} merged in (${view.mergeable}/${view.mergeStateStatus})`);
+  else if (view.mergeable !== 'MERGEABLE') reasons.push(`mergeability is ${view.mergeable} (retry shortly)`);
+  return { eligible: reasons.length === 0, reasons, needsSync, head, pr, keepOpen: last.data.keep_open };
+}
+
+// Github delivery with a file-based tracker: issue status changes are queued here and committed by `crew wrapup` in
+// its PR, so nothing is ever committed straight to the base branch.
+const queuedUpdates = () => join(runDir(run), 'issue-updates.jsonl');
+const readQueued = () => (existsSync(queuedUpdates()) ? readFileSync(queuedUpdates(), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+function queueUpdate(update) {
+  if (readQueued().some((u) => u.task === update.task)) return;
+  mkdirSync(runDir(run), { recursive: true });
+  writeFileSync(queuedUpdates(), [...readQueued(), update].map((u) => JSON.stringify(u)).join('\n') + '\n');
+}
+let repoUrl;
+const prLink = (pr) => (pr ? `[#${pr}](${(repoUrl ??= gh('repo', 'view', '--json', 'url', '-q', '.url'))}/pull/${pr})` : '');
+
 const fill = (text, values) => text.replace(/\{(\w+)\}/g, (m, k) => values[k] ?? m);
 function placeholders(id, events) {
   const last = lastStatus(events, id);
   const status = readJson(join(runDir(run), 'drivers', `${id}.json`), {});
   const evidence = (status.checks ?? []).map((r) => `${r.id} exit ${r.code}`).join(', ');
-  return { merge: last?.data?.merge?.slice(0, 7) ?? '', evidence, issue: String(contract(id).issue), task: id };
+  return { merge: last?.data?.merge?.slice(0, 7) ?? '', pr: isGithub() ? prLink(last?.data?.pr) : '', evidence, issue: String(contract(id).issue), task: id };
+}
+
+// Github delivery: docs edits and queued issue updates go on one branch from the remote base and become one PR. Every
+// step checks what already happened, so a wrapup interrupted anywhere can simply be run again.
+async function wrapupPr() {
+  const config = cfg();
+  const events = readEvents(run);
+  const done = taskIds().filter((id) => DONE_FOR_DEPENDANTS.has(state(events, id)));
+  const edits = done.flatMap((id) => contract(id).docs.map((d) => ({ id, ...d })));
+  const updates = readQueued();
+  if (!edits.length && !updates.length) return console.log('no docs edits or issue updates in this run');
+  const { remote } = config.delivery;
+  const branch = `${config.branchPrefix}crew-${run}-docs`;
+  const wt = worktreeOf(`crew-${run}-docs`);
+  git(ROOT, 'fetch', remote, config.baseBranch);
+  if (!existsSync(wt)) {
+    const exists = tryGit(ROOT, 'rev-parse', '--verify', `refs/heads/${branch}`).ok;
+    git(ROOT, 'worktree', 'add', wt, ...(exists ? [branch] : ['-b', branch, baseRef()]));
+  }
+  const committed = () => git(wt, 'log', '--oneline', `${baseRef()}..HEAD`) !== '';
+  if (!rest.includes('--publish') && !committed()) {
+    const failures = [];
+    for (const e of edits) {
+      const file = join(wt, e.file);
+      const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
+      const count = text.split(e.find).length - 1;
+      if (count !== 1) { failures.push(`${e.id}: "${e.find.slice(0, 60)}" occurs ${count}× in ${e.file}`); continue; }
+      writeFileSync(file, text.replace(e.find, () => fill(e.replace, placeholders(e.id, events))));
+    }
+    const local = await issueTracker(wt, config.issues);
+    for (const u of updates) await local.update(u.issue, { status: u.status, note: u.note });
+    if (failures.length) die(`applied what matched in ${wt}; fix these by hand there, then run wrapup ${run} --publish:\n${failures.map((f) => `- ${f}`).join('\n')}`);
+  }
+  if (config.docsCheck) {
+    const check = await shell(config.docsCheck, { cwd: wt, logFile: join(runDir(run), 'logs', 'wrapup-docs-check.log') });
+    if (check.code !== 0) die(`${config.docsCheck} failed in ${wt}:\n${check.out}`);
+  }
+  if (git(wt, 'status', '--porcelain')) {
+    git(wt, 'add', '-A');
+    git(wt, 'commit', '-q', '-m', withTrailer(`docs: status for crew run ${run}\n\n${done.map((id) => `- ${id}`).join('\n')}\n\nCrew-Wrapup: ${run}`));
+  }
+  if (!committed()) die('nothing to commit: no docs edits or issue updates applied');
+  git(wt, 'push', '-u', remote, branch);
+  const open = JSON.parse(gh('pr', 'list', '--head', branch, '--state', 'open', '--json', 'url'));
+  if (open.length) return console.log(open[0].url);
+  const list = done.map((id) => `- ${id}: ${placeholders(id, events).pr}`).join('\n');
+  const body = [`Docs and issue statuses for the tasks merged in crew run \`${run}\`:`, '', list, ...(config.docsCheck ? ['', `\`${config.docsCheck}\` passes.`] : []), ...(config.delivery.prFooter ? ['', config.delivery.prFooter] : [])].join('\n');
+  console.log(gh('pr', 'create', '--base', config.baseBranch, '--head', branch, '--title', `docs: status for crew run ${run}`, '--body', body));
 }
 
 const commands = {
@@ -164,9 +247,16 @@ const commands = {
     if (!existsSync(CONFIG_FILE)) { ok(false, `${relative(ROOT, CONFIG_FILE)} missing: run "/crew adapt"`); return console.log(lines.join('\n')); }
     const config = cfg();
     ok(true, `config ${relative(ROOT, CONFIG_FILE)}`);
-    ok(tryGit(ROOT, 'rev-parse', '--verify', `refs/heads/${config.baseBranch}`).ok, `base branch ${config.baseBranch} exists`);
-    const current = tryGit(ROOT, 'symbolic-ref', '--short', 'HEAD').out;
-    ok(current === config.baseBranch, `main folder is on ${current} (merges need ${config.baseBranch})`);
+    if (isGithub(config)) {
+      const { remote } = config.delivery;
+      ok(tryGit(ROOT, 'remote', 'get-url', remote).ok, `remote ${remote} exists`);
+      ok(tryGit(ROOT, 'ls-remote', '--exit-code', '--heads', remote, config.baseBranch).ok, `base branch ${config.baseBranch} exists on ${remote}`);
+      ok(tryGh('auth', 'status') !== null, 'gh is authenticated (delivery: github)');
+    } else {
+      ok(tryGit(ROOT, 'rev-parse', '--verify', `refs/heads/${config.baseBranch}`).ok, `base branch ${config.baseBranch} exists`);
+      const current = tryGit(ROOT, 'symbolic-ref', '--short', 'HEAD').out;
+      ok(current === config.baseBranch, `main folder is on ${current} (merges need ${config.baseBranch})`);
+    }
     for (const dir of [`${config.stateDir}/runs`, `${config.stateDir}/locks`, config.worktreeDir]) ok(tryGit(ROOT, 'check-ignore', '-q', `${dir}/x`).ok, `${dir}/ is gitignored`);
     try {
       const t = await tracker();
@@ -202,7 +292,9 @@ const commands = {
     const errors = await validate();
     if (errors.length) die(`refusing to start, run validate:\n${errors.map((e) => `- ${e}`).join('\n')}`);
     const t = await tracker();
-    for (const id of taskIds()) {
+    // With github delivery a file tracker is only updated through the wrapup PR, never as local uncommitted edits.
+    const markStarted = !isGithub() || Boolean(cfg().issues.github);
+    for (const id of markStarted ? taskIds() : []) {
       const c = contract(id);
       if (c.issue == null || loadBatch(run, c.batch).dry_run) continue;
       const issue = (await t.list()).find((i) => i.id === String(c.issue));
@@ -278,27 +370,39 @@ const commands = {
     if (!r.eligible) die(`✗ not eligible, nothing merged:\n${r.reasons.map((x) => `- ${x}`).join('\n')}`);
     let sha = r.alreadyMerged;
     const t = await tracker();
-    if (!sha) {
+    const note = c.keep_open
+      ? `crew run ${run}: ${id} merged; stays open${c.manual_acceptance ? ` for manual acceptance: ${c.manual_acceptance}` : ''}`
+      : `crew run ${run}: ${id} merged`;
+    const status = c.keep_open ? 'in_progress' : 'done';
+    const reportFile = join(runDir(run), 'reports', `${id}.md`);
+    const body = existsSync(reportFile) ? readFileSync(reportFile, 'utf8').split('\n').slice(2).join('\n').trim() : c.summary;
+    if (isGithub()) {
+      if (!sha) {
+        gh('pr', 'merge', String(r.pr), '--squash', '--match-head-commit', r.head, '--subject', `${c.commit} (#${r.pr})`, '--body', withTrailer(`${body}\n\n${trailer(id)}`));
+        sha = JSON.parse(gh('pr', 'view', String(r.pr), '--json', 'mergeCommit')).mergeCommit?.oid;
+      }
+      if (c.issue != null) {
+        if (cfg().issues.github) await t.update(c.issue, { status, note });
+        else queueUpdate({ task: id, issue: String(c.issue), status, note });
+      }
+      tryGit(ROOT, 'push', cfg().delivery.remote, '--delete', c.branch);
+    } else if (!sha) {
       git(ROOT, 'merge', '--squash', c.branch);
-      const note = c.keep_open
-        ? `crew run ${run}: ${id} merged; stays open${c.manual_acceptance ? ` for manual acceptance: ${c.manual_acceptance}` : ''}`
-        : `crew run ${run}: ${id} merged`;
-      const changed = c.issue != null ? await t.update(c.issue, { status: c.keep_open ? 'in_progress' : 'done', note }) : null;
+      const changed = c.issue != null ? await t.update(c.issue, { status, note }) : null;
       if (changed) git(ROOT, 'add', '--', changed);
-      const reportFile = join(runDir(run), 'reports', `${id}.md`);
-      const body = existsSync(reportFile) ? readFileSync(reportFile, 'utf8').split('\n').slice(2).join('\n').trim() : c.summary;
       const message = join(runDir(run), 'reports', `${id}.commit.txt`);
       writeFileSync(message, `${withTrailer(`${c.commit}\n\n${body}\n\n${trailer(id)}`)}\n`);
       git(ROOT, 'commit', '-q', '-F', message);
       sha = git(ROOT, 'rev-parse', 'HEAD');
     }
-    appendEvent(run, c.keep_open ? 'needs_human' : 'merged', id, { merge: sha }, 'boss');
+    appendEvent(run, c.keep_open ? 'needs_human' : 'merged', id, { merge: sha, pr: r.pr ?? null }, 'boss');
     tryGit(ROOT, 'worktree', 'remove', worktreeOf(id));
     tryGit(ROOT, 'branch', '-D', c.branch);
-    console.log(`✓ ${id}: merged into ${cfg().baseBranch} as ${sha.slice(0, 7)}${c.keep_open ? ` (issue ${c.issue} stays open: needs_human)` : c.issue != null ? ` (issue ${c.issue} done)` : ''}`);
+    console.log(`✓ ${id}: ${r.pr ? `PR #${r.pr} ` : ''}merged into ${cfg().baseBranch} as ${sha?.slice(0, 7)}${c.keep_open ? ` (issue ${c.issue} stays open: needs_human)` : c.issue != null ? ` (issue ${c.issue} done)` : ''}`);
   },
 
   async wrapup() {
+    if (isGithub()) return wrapupPr();
     const config = cfg();
     const events = readEvents(run);
     const done = taskIds().filter((id) => DONE_FOR_DEPENDANTS.has(state(events, id)));

@@ -1,6 +1,6 @@
 ---
 name: crew
-description: Run a batch of this project's issues with a three-tier crew — this session is the boss (adapts the crew to the project, plans contracts, decides merges), a deterministic orchestrator script per batch schedules and supervises, and a deterministic driver script per task loops a coder and a reviewer (`claude -p`, sandboxed) in its own git worktree until the change is approved and its checks pass. Fully local: issues come from project files, approved work is squash-merged into the base branch, no GitHub needed. Use when the user asks for the crew, to adapt the crew to a project, or to run several issues in parallel.
+description: Run a batch of this project's issues with a three-tier crew — this session is the boss (adapts the crew to the project, plans contracts, decides merges), a deterministic orchestrator script per batch schedules and supervises, and a deterministic driver script per task loops a coder and a reviewer (`claude -p`, sandboxed) in its own git worktree until the change is approved and its checks pass. Issues come from project files, GitHub Issues or a project adapter; approved work is squash-merged locally into the base branch, or delivered as GitHub PRs that must pass CI. Use when the user asks for the crew, to adapt the crew to a project, or to run several issues in parallel.
 ---
 
 # Crew
@@ -64,7 +64,7 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
    - `batches/<batch>.json`: group by area or dependency chain. Use one batch by default; `max_parallel` is 2 by default.
    - `PLAN.md`: queue, dependency graph, batches, tiers with a one-line reason each, gaps, and decisions the user should confirm.
 3. `crew validate <run>` and fix every problem. Read the `!` warnings: a reviewer no stronger than its coder makes correlated mistakes. The default pair is a Haiku coder and a Sonnet reviewer; raise the coder to Sonnet when the contract leaves real decisions to it, and keep Opus reviewers for security, auth and data work.
-4. Show the queue, batches, tiers, decisions and gaps in one short message. Unless the user said `plan-only`, continue into **Run** in the same turn. Invoking `/crew` on issues authorizes the whole local pipeline: worktrees, commits, local merges into the base branch, issue status updates. It never authorizes pushing, deploying or touching anything outside this machine.
+4. Show the queue, batches, tiers, decisions and gaps in one short message. Unless the user said `plan-only`, continue into **Run** in the same turn. Invoking `/crew` on issues authorizes the whole pipeline for the configured delivery: worktrees, commits, issue status updates, and either local merges into the base branch (`local`) or pushes, PRs, PR merges and a docs PR (`github`). It never authorizes deploying, publishing, or touching anything beyond that.
 
 `rehearse <run>`: copy the run to `<run>-rehearsal` with `"dry_run": true` in every batch, then run it. Drivers do real rounds but are never merged. Afterwards remove the rehearsal's worktrees and branches.
 
@@ -73,7 +73,7 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
 1. Clear readiness gaps you can fix yourself (start a database a lock needs). Then `crew start <run>`. This marks the run's issues `in_progress` and launches the orchestrators.
 2. Watch with **Monitor**: `node .claude/skills/crew/crew.mjs follow <run> ready_to_merge,needs_replan,escalate,blocked,batch_done,driver_restarted,triage,round,help`, `timeout_ms: 1800000`. Re-arm on expiry until the run ends. Never poll in between.
 3. React:
-   - **`ready_to_merge`** → `crew merge-check <run> <id>`, then read `<run>/reports/<id>.md` and the diff (`git diff <base>...<branch>`).
+   - **`ready_to_merge`** → `crew merge-check <run> <id>`, then read `<run>/reports/<id>.md` and the diff (`git diff <base>...<branch>`, or `gh pr diff <pr>` with github delivery).
      - Not eligible → it says why. Exit 3 means the base moved: `crew merge` records `rebase_needed`, and the driver merges the base in and re-runs every check.
      - Eligible → you decide, and you can only veto. Judge what the gates can't see: integration risk with what merged since, contract drift, the review notes, flaky evidence (re-run a suite if the report or coder mentions an unexplained failure).
      - Approve with `crew merge <run> <id>`. It squash-merges into the base branch, with the report as the commit body, and updates the issue.
@@ -90,7 +90,7 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
 
 ## Wrap-up
 
-1. `crew wrapup <run>` applies every merged contract's `docs` edits on the base branch, runs `docsCheck`, and commits. If an anchor no longer matches, fix it by hand and commit.
+1. `crew wrapup <run>` applies every merged contract's `docs` edits, runs `docsCheck`, and commits them on the base branch (`local`). With github delivery it does that on one branch, together with any queued issue-status changes, and opens a PR: wait for its CI (`gh pr checks <n> --watch`), then merge it. If an anchor no longer matches, fix it by hand (github: in the printed worktree, then `crew wrapup <run> --publish`).
 2. Final table: `crew status <run>` (it includes cost) plus the merge commits (`git log --grep "Crew-Task: <run>/"`). List anything left open and why.
 
 ## resume / status / stop

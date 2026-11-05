@@ -15,6 +15,7 @@ Written by `/crew adapt` and committed with the project. Every field is optional
   "network": { "allowedDomains": ["registry.npmjs.org"] },
   "docsCheck": "npm run lint:docs",
   "commitTrailer": null,
+  "delivery": { "mode": "local", "remote": "origin", "prFooter": null },
   "securityPaths": "auth|session|token|secret|security|crypto|password|permission|payment|migration"
 }
 ```
@@ -35,6 +36,9 @@ Written by `/crew adapt` and committed with the project. Every field is optional
 | `network.allowedDomains` | Hosts that sandboxed coder/reviewer commands may reach, besides localhost. Package registries, usually |
 | `docsCheck` | Command `crew wrapup` runs after applying docs edits (a link checker, a docs build). `null` to skip |
 | `securityPaths` | Regex (case-insensitive) for files whose review justifies Opus. `validate` warns about an Opus reviewer on a task that touches none of them |
+| `delivery.mode` | `local` (default): approved tasks are squash-merged into the base branch on this machine; nothing is pushed. `github`: each task is pushed as a PR that must pass CI, and `crew merge` squash-merges the PR with `gh`. Needs `gh` authenticated |
+| `delivery.remote` | The remote PR branches are pushed to and the base branch is fetched from (github delivery) |
+| `delivery.prFooter` | Text appended to every crew PR body (github delivery). `null` adds nothing |
 | `commitTrailer` | A line appended to every crew commit message, e.g. `Signed-off-by: …` or a `Co-Authored-By:` line. `null` (the default) adds nothing |
 
 The sandbox also always denies home credentials (`~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.npmrc`, …) and edits to anything in the main folder, so coders work only in their worktree.

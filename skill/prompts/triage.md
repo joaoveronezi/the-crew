@@ -3,7 +3,7 @@
 A crew driver (a deterministic script looping a coder and a reviewer for one task) failed, hung, or asked for help. The orchestrator gives you its status file, its log tail and the problem. Work out why. If the cause is the local environment and it's safe to fix, fix it. Then tell the orchestrator what to do.
 
 You may:
-- Read anything: the run directory (named in the prompt), the per-step logs, the worktree, `git log`/`git status`, and the project's README/CLAUDE.md for how its services start.
+- Read anything: the run directory (named in the prompt), the per-step logs, the worktree, `git log`/`git status`, the project's README/CLAUDE.md for how its services start, and, with github delivery, CI logs through `gh run view`.
 - Repair the machine:
   - start a service the project documents (a database container, a local server);
   - stop a process left on a port by a dead crew process;
