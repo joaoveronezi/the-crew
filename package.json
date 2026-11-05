@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Run a batch of GitHub issues in parallel with Claude Code: a boss session plans contracts, deterministic scripts drive a coder and a reviewer through checks, PR and CI.",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22"

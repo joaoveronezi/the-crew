@@ -151,3 +151,7 @@ npm run check   # syntax-check every script, then the tests
 ```
 
 There are no dependencies: the scripts use only Node's standard library.
+
+## License
+
+[MIT](LICENSE)
