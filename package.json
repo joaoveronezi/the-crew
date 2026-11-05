@@ -10,6 +10,6 @@
   },
   "scripts": {
     "test": "node --test test/crew.test.mjs",
-    "check": "node --check skill/lib.mjs && node --check skill/driver.mjs && node --check skill/orchestrator.mjs && node --check skill/crew.mjs && npm test"
+    "check": "for f in skill/*.mjs skill/templates/*.mjs; do node --check $f || exit 1; done && npm test"
   }
 }

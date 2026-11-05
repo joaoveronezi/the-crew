@@ -1,53 +1,52 @@
-# Machine contract (`contracts/<PLAN-ID>.json`)
+# Machine contract: `contracts/<TASK-ID>.json`
 
-Every task has two contract files. The prose `<PLAN-ID>.md` follows [the prose template](contract-md.md); the coder and reviewer read it. The JSON beside it is what the driver executes and `crew.mjs validate` checks. Both must agree. When you replan, bump `version` in the JSON and the header of the `.md` together.
+What the driver executes and `crew validate` checks. It must agree with the prose `.md` beside it.
 
 ```json
 {
-  "id": "WEB-TITLE-001",
+  "id": "EXPORT-1",
   "version": 1,
-  "issue": 50,
-  "title": "Truncate long titles in the list view",
-  "batch": "web",
+  "issue": "12",
+  "title": "CSV export of orders",
+  "summary": "GET /orders.csv streams the caller's orders as CSV; only their own orders, 10k row cap.",
+  "batch": "api",
   "depends_on": [],
-  "branch": "agent/WEB-TITLE-001-truncate-titles",
-  "models": { "coder": "haiku", "reviewer": "sonnet" },
+  "branch": "crew/EXPORT-1-orders-csv",
+  "models": { "coder": "sonnet", "reviewer": "opus" },
   "allowed_files": [
-    { "path": "web/src/list/title.ts", "op": "edit" },
-    { "path": "web/src/list/title.test.ts", "op": "create" }
+    { "path": "src/routes/orders.ts", "op": "edit" },
+    { "path": "test/orders-csv.test.ts", "op": "create" }
   ],
-  "setup": ["npm --prefix web ci"],
-  "checks": [{ "id": "AC1", "cmd": "cd web && npm test", "expect_exit": 0 }],
-  "gates": ["npm --prefix web run lint", "npm --prefix web run build"],
-  "e2e": [{ "id": "e2e-list", "cmd": "npm --prefix web run e2e -- list.spec.ts" }],
+  "setup": ["npm ci"],
+  "checks": [
+    { "id": "AC1", "cmd": "npx vitest run test/orders-csv.test.ts", "expect_exit": 0, "locks": ["db"] }
+  ],
+  "gates": ["npm run typecheck", "npm run lint", "npm test"],
   "locks": [],
   "max_rounds": 3,
   "budget_usd": { "coder": 5, "reviewer": 2, "triage": 1 },
-  "timeout_min": { "setup": 20, "coder": 45, "reviewer": 20, "checks": 30, "e2e": 40, "ci": 45 },
-  "commit": "web: truncate long titles in the list view (WEB-TITLE-001)",
-  "pr": { "title": "web: truncate long titles in the list view (WEB-TITLE-001)", "summary": "…", "closes_issue": true },
+  "timeout_min": { "setup": 20, "coder": 45, "reviewer": 20, "checks": 30 },
+  "commit": "feat: CSV export of orders (EXPORT-1)",
+  "close_issue": true,
   "manual_acceptance": null,
-  "issue_comment": "Shipped in {pr} ({merge}).",
   "docs": [
-    { "file": "docs/STATUS.md", "find": "Next recommended: #50 WEB-TITLE-001", "replace": "#50 shipped in {pr}. Next recommended: #51" }
+    { "file": "CHANGELOG.md", "find": "## Unreleased\n", "replace": "## Unreleased\n\n- CSV export of orders ({merge})\n" }
   ]
 }
 ```
 
 | field | rule |
 | --- | --- |
-| `branch` | Must start with the configured `branch_prefix` (`agent/` by default) |
-| `allowed_files` | Every path the branch may differ from main in. `edit`/`delete` must exist on the remote main branch, and `create` must not. A diff outside it is a `scope` finding |
-| `checks` | Acceptance criteria a command can prove (exit code). Criteria that need judgment ("the diff caps exactly these nodes") stay in the `.md` only; the reviewer reports them |
-| `gates` | Commands that must exit 0 (typecheck, lint, tests, build, docs checks). `npm run X` scripts must exist on main |
-| `e2e` | `{ "id", "cmd" }` commands for slow, machine-wide flows (devices, browsers, fixed ports). They run after the checks pass, one driver at a time. Implies `locks: ["e2e"]` |
-| `locks` | Names from `crew.config.json` `locks` (default `e2e`, `db`). `e2e` serializes the e2e commands across drivers. Every other lock (e.g. `db`, for tests that share a local database) is held during the coder call and the checks |
-| `depends_on` | Required when two tasks share a file, or both touch one project's ordering paths (lockfiles, migrations by default; see `ordering_paths`). Validate enforces it |
-| `models` | `haiku` / `sonnet` / `opus`, default `{ "coder": "haiku", "reviewer": "sonnet" }`. Use `haiku` for the coder only when every step is literal (exact strings, copy an existing pattern, docs), and `sonnet` when it must place changes, wire files or write tests. Keep the reviewer stronger than the coder (validate warns when it isn't). Use an `opus` reviewer only for security, auth or migration work: it is the most expensive call in a run, and validate warns when the allowlist doesn't match `security_paths` |
-| `max_rounds` | Hard cap on coder → reviewer rounds before `needs_replan` (1–5, default 3). Merge-conflict rounds don't count; CI-failure rounds do. A finding marked `not_fixed` twice in a row stops the task sooner |
-| `budget_usd` | `--max-budget-usd` per call (a resumed coder call is capped at its own spend, not the session's). Overrun → `escalate` |
-| `pr.closes_issue` | `false`, or a non-null `manual_acceptance`, gives `Refs #n`, keeps the issue open and ends the task as `needs_human` |
-| `issue_comment` | Posted by `crew merge`. Placeholders: `{pr}` `{merge}` `{issue}` |
-| `docs` | Applied by `crew wrapup` in one docs PR. `find` must occur exactly once (Edit semantics). Placeholders: `{pr}` `{merge}` `{evidence}` `{issue}` |
-
-Omitted optional fields take the defaults shown. `crew.mjs validate <run>` must print ✓ before `start` will launch anything.
+| `id` | Letters, digits, `.`, `_`, `-`. Also the worktree name |
+| `issue` | The tracker id (`crew issues`). Its status goes `in_progress` on `crew start` and `done` on merge |
+| `allowed_files` | Every path the branch may differ from the base in. `edit`/`delete` must exist on the base branch; `create` must not. Issue files and crew files are never allowed. A diff outside this list is a `scope` finding |
+| `checks` | Acceptance criteria a command can prove (exit code). A check may name `locks` it needs. Criteria that need judgment stay in the `.md` only; the reviewer reports them. To prove tests really ran, grep the runner's output for the new test names and for zero skipped |
+| `gates` | Commands that must exit 0. `npm run X` scripts must exist on the base |
+| `locks` | Locks held for the coder and every check (names from the config) |
+| `depends_on` | Required when two tasks share a file or a `sensitivePaths` area (`validate` enforces it) |
+| `models` | `haiku` only when every step is literal; `sonnet` for wiring, tests or UI; a reviewer stronger than the coder (`validate` warns otherwise); `opus` to review security, auth or data work |
+| `max_rounds` | Hard cap on coder → reviewer rounds (1–5). A finding marked `not_fixed` twice stops the task sooner. Merge-conflict rounds don't count |
+| `budget_usd` | `--max-budget-usd` per call. An overrun → `escalate` |
+| `close_issue` / `manual_acceptance` | `close_issue: false` or a manual acceptance note keeps the issue `in_progress` after the merge (state `needs_human`) |
+| `commit` | The squash commit's subject. The task report becomes its body |
+| `docs` | Applied by `crew wrapup`. `find` must occur exactly once on the base. Placeholders: `{merge}` `{evidence}` `{issue}` `{task}` |

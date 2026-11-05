@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crew Live</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #fff; --sunk: #eef0f4; --ink: #1b2130; --muted: #5f6a80; --line: #dde1e8;
+    --blue: #2563eb; --green: #15803d; --amber: #b45309; --red: #c2410c; --gray: #7b8496;
+    --blue-bg: #e8effd; --green-bg: #e7f5ec; --amber-bg: #fdf3e3; --red-bg: #fdece4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10131a; --card: #191e28; --sunk: #222936; --ink: #e8ebf1; --muted: #9aa3b5; --line: #2c3442;
+      --blue: #7aa2ff; --green: #5ccf8d; --amber: #f0b45a; --red: #ff8a65; --gray: #7f889b;
+      --blue-bg: #1c2a4a; --green-bg: #173326; --amber-bg: #3a2c15; --red-bg: #3d2119;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86em; }
+  .muted { color: var(--muted); }
+  button { font: inherit; color: inherit; }
+
+  header { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 18px; margin: 0; }
+  .live { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gray); }
+  .dot.on { background: var(--green); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .modes { margin-left: auto; display: inline-flex; background: var(--sunk); border-radius: 999px; padding: 3px; }
+  .modes button { border: 0; background: none; padding: 5px 14px; border-radius: 999px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .modes button[aria-pressed="true"] { background: var(--card); color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgb(0 0 0 / .15); }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; padding: 16px; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
+  section, aside { min-width: 0; }
+  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 8px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+
+  .intro { margin-bottom: 16px; font-size: 14px; color: var(--muted); }
+  .intro b { color: var(--ink); }
+  .boss { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .boss.attn { border-color: var(--amber); background: var(--amber-bg); }
+  .boss .who { font-weight: 600; }
+  .counts { display: flex; flex-wrap: wrap; gap: 14px; font-size: 14px; }
+  .counts b { font-size: 18px; margin-right: 4px; }
+
+  .batches { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 20px; align-items: start; }
+  .orch { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .orch .name { font-weight: 600; }
+  .stack { display: grid; gap: 10px; }
+
+  .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; white-space: nowrap; }
+  .tone-blue { color: var(--blue); background: var(--blue-bg); }
+  .tone-green { color: var(--green); background: var(--green-bg); }
+  .tone-amber { color: var(--amber); background: var(--amber-bg); }
+  .tone-red { color: var(--red); background: var(--red-bg); }
+  .tone-gray { color: var(--muted); background: var(--sunk); }
+
+  .task-head { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+  .task-title { font-weight: 600; font-size: 16px; }
+  .task-id { font-size: 12px; color: var(--muted); }
+  .task.compact { padding: 10px 16px; }
+  .task.compact .task-title { font-size: 15px; font-weight: 500; }
+  .task.working { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+  .task.attn { border-color: var(--amber); }
+  .line { margin-top: 4px; font-size: 13px; color: var(--muted); }
+
+  .now { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--blue-bg); }
+  .now .what { font-weight: 600; color: var(--blue); }
+  .now .detail { margin-top: 2px; font-size: 13px; overflow-wrap: anywhere; }
+  .now.idle { background: var(--sunk); }
+  .now.idle .what { color: var(--muted); }
+
+  .steps { display: flex; gap: 4px; margin-top: 12px; }
+  .steps span { flex: 1; text-align: center; font-size: 11px; padding: 4px 0; border-radius: 4px; background: var(--sunk); color: var(--muted); }
+  .steps span.done { background: var(--green-bg); color: var(--green); }
+  .steps span.current { background: var(--blue); color: #fff; font-weight: 600; }
+  .steps span.current.paused { background: var(--gray); }
+
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 13px; }
+  .facts .on { color: var(--blue); font-weight: 600; }
+  .ok { color: var(--green); }
+  .bad { color: var(--red); }
+
+  .problem { margin-top: 10px; padding: 8px 12px; border-left: 3px solid var(--red); background: var(--red-bg); border-radius: 0 6px 6px 0; font-size: 13px; }
+  .problem b { color: var(--red); }
+  .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+
+  .foot { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .more { margin-top: 10px; border: 0; background: none; padding: 0; color: var(--blue); font-size: 13px; cursor: pointer; }
+  .more:hover { text-decoration: underline; }
+  .tech { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+  .tech .facts:first-child, .tech .problem:first-child { margin-top: 0; }
+  .act { margin-top: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--sunk); border-radius: 6px; padding: 6px 8px; overflow-wrap: anywhere; }
+
+  .feed { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+  @media (max-width: 960px) { .feed { position: static; max-height: none; } }
+  .ev { display: grid; grid-template-columns: 62px 1fr; gap: 0 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .ev:last-child { border: 0; }
+  .ev.has-more { cursor: pointer; }
+  .ev .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .ev .head { font-weight: 600; }
+  .ev .who { color: var(--muted); font-size: 12px; }
+  .ev .body { color: var(--muted); margin-top: 2px; }
+  .ev .body.clamp { -webkit-line-clamp: 2; }
+  .ev.fresh { animation: flash 2.5s; }
+  @keyframes flash { from { background: var(--blue-bg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="run">Crew</h1>
+  <span id="cost" class="muted"></span>
+  <span class="live"><span id="dot" class="dot"></span><span id="status">connecting…</span></span>
+  <div class="modes" role="group" aria-label="Level of detail">
+    <button type="button" data-mode="simple">Simple</button>
+    <button type="button" data-mode="tech">Technical</button>
+  </div>
+</header>
+<main>
+  <section>
+    <div id="intro" class="intro"></div>
+    <div id="boss" class="card boss"></div>
+    <div id="batches" class="batches"></div>
+  </section>
+  <aside class="card feed">
+    <h2>What happened</h2>
+    <div id="events"></div>
+  </aside>
+</main>
+<script>
+// Everything from the run is rendered with textContent: logs and agent output can contain anything.
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+const ago = (iso) => {
+  if (!iso) return '';
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+  return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} h ago`;
+};
+const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const money = (n) => `$${(n ?? 0).toFixed(2)}`;
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// ---- Level of detail. "simple" is for anyone; "tech" adds ids, models, commands and raw agent output.
+let mode = 'simple';
+try { mode = localStorage.getItem('crew-mode') === 'tech' ? 'tech' : 'simple'; } catch { /* storage blocked: default */ }
+const openDetails = new Set(); // task ids whose details are open in simple mode
+const tech = () => mode === 'tech';
+for (const b of document.querySelectorAll('.modes button')) {
+  b.onclick = () => {
+    mode = b.dataset.mode;
+    try { localStorage.setItem('crew-mode', mode); } catch { /* not remembered, still works */ }
+    if (snap) render(snap);
+  };
+}
+
+// ---- Words for each level.
+const STEPS_SIMPLE = [['Getting ready', ['prepare']], ['Building', ['code']], ['Testing', ['verify']], ['Reviewing', ['review']], ['Finishing', ['sync', 'publish', 'ci', 'handoff']]];
+const STEP_TECH = { prepare: 'Setup', code: 'Code', verify: 'Checks', review: 'Review', sync: 'Sync', publish: 'Push', ci: 'CI', handoff: 'Report' };
+const DOING = {
+  prepare: ['Getting a private copy of the project ready', 'Setting up the worktree'],
+  code: ['An AI developer is building this', 'Coder is writing code'],
+  verify: ['Automatic tests are checking the work', 'Running the checks'],
+  review: ['An AI reviewer is checking the work', 'Reviewer is reviewing the change'],
+  sync: ['Catching up with the latest version of the project', 'Bringing in the latest base branch'],
+  publish: ['Packaging the change for approval', 'Pushing the branch and opening the PR'],
+  ci: ['Running the final test suite', 'Waiting for CI'],
+  handoff: ['Writing a summary of the work', 'Writing the hand-off report'],
+};
+// state → [simple label, tech label, tone, simple note, tech note]
+const STATE = {
+  ready_to_merge: ['Ready to ship', 'Ready to merge', 'amber', 'Passed every test and review. Waiting for the lead AI to ship it.', 'Approved and green. Waiting for the boss to merge.'],
+  needs_replan: ['Needs attention', 'Needs a new plan', 'amber', 'The plan for this task needs adjusting. The lead AI is on it.', 'The contract was wrong. Waiting for the boss to revise it.'],
+  escalate: ['Needs attention', 'Needs a decision', 'amber', 'The AI team couldn’t finish this alone. The lead AI decides what to do next.', 'Waiting for the boss to decide how to continue.'],
+  help: ['Fixing a hiccup', 'Asked for help', 'amber', 'Something in the setup broke. It’s being looked at automatically.', 'Something in the environment broke. Triage is looking at it.'],
+  merged: ['Shipped', 'Merged', 'green', 'Done and added to the project.', null],
+  needs_human: ['Shipped', 'Done', 'green', 'Done and added to the project. A person will close the request.', 'Merged; the issue stays open for a person to close.'],
+  blocked: ['Stuck', 'Blocked', 'red', 'Can’t continue without a decision from a person.', null],
+  abandoned: ['Dropped', 'Abandoned', 'red', 'This task was cancelled.', null],
+};
+const FINISHED = new Set(['merged', 'needs_human', 'blocked', 'abandoned']);
+const DONE_FOR_DEPENDANTS = new Set(['merged', 'needs_human']);
+
+let snap = null;
+let seen = new Set();
+const expanded = new Set();
+let titles = {};
+const nameOf = (id) => titles[id] ?? id;
+
+function describe(t, states) {
+  const blockedBy = t.depends_on.filter((d) => !DONE_FOR_DEPENDANTS.has(states[d]));
+  const st = STATE[t.state];
+  if (st) return { label: tech() ? st[1] : st[0], tone: st[2], note: tech() ? st[4] ?? st[3] : st[3], kind: FINISHED.has(t.state) ? 'finished' : 'attn' };
+  if (!t.phase) return blockedBy.length
+    ? { label: tech() ? 'Waiting' : 'Up next', tone: 'gray', kind: 'queued',
+        note: tech() ? `Starts after ${blockedBy.join(' and ')} ${blockedBy.length > 1 ? 'are' : 'is'} merged.` : `Starts once “${blockedBy.map(nameOf).join('” and “')}” ${blockedBy.length > 1 ? 'are' : 'is'} shipped.` }
+    : { label: tech() ? 'Queued' : 'Up next', tone: 'gray', note: tech() ? 'Starts when a slot frees up.' : 'Starts as soon as the team has room.', kind: 'queued' };
+  return t.driver?.alive
+    ? { label: tech() ? 'Working' : 'In progress', tone: 'blue', kind: 'working' }
+    : { label: 'Paused', tone: 'gray', kind: 'paused',
+        note: tech() ? 'The driver is not running. The orchestrator restarts it on its next check.' : 'Briefly paused. It restarts on its own.' };
+}
+
+// Agents work inside `.worktrees/<task>/`; that prefix is noise when reading what they do.
+const shortPaths = (text) => text.replace(/\/\S*?\/\.worktrees\/[^/\s]+\/?/g, '');
+// "check AC1: <long command>" → "Check AC1"; "e2e ios flows/x.yaml" → "iOS end-to-end test x.yaml".
+function prettyStep(text) {
+  let m = text.match(/^check (\S+?):/);
+  if (m) return `Check ${m[1]}`;
+  m = text.match(/^e2e (\w+) (.+)$/);
+  if (m) return `${m[1] === 'ios' ? 'iOS' : m[1] === 'android' ? 'Android' : m[1]} end-to-end test ${m[2].split('/').pop()}`;
+  m = text.match(/^round (\d+): (\w+) \((\w+)\)$/);
+  if (m) return `Starting the ${m[2]} (${m[3]}) for round ${m[1]}`;
+  return text;
+}
+// What the driver is doing, said without jargon.
+function simpleStep(text) {
+  if (/^e2e /.test(text)) return 'Trying it out on a simulated phone';
+  if (/^check /.test(text)) return 'Running automatic tests';
+  if (/^round \d+: coder/.test(text)) return 'Handing the work to the AI developer';
+  if (/^round \d+: reviewer/.test(text)) return 'Handing the work to the AI reviewer';
+  return null;
+}
+// A finding is written for the coder. For people: say which kind of check failed, not its text.
+function simpleProblem(f) {
+  if (f.source === 'e2e') return 'The test on a simulated phone didn’t pass yet.';
+  if (f.source === 'check') return 'One of the automatic tests didn’t pass yet.';
+  if (f.source === 'review') return 'The AI reviewer asked for changes.';
+  if (f.source === 'scope') return 'The change touched files it wasn’t supposed to.';
+  if (f.source === 'conflict') return 'The change clashed with newer work and needs reconciling.';
+  return 'Something didn’t pass yet.';
+}
+
+function render(s) {
+  snap = s;
+  for (const b of document.querySelectorAll('.modes button')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+  const tasks = s.batches.flatMap((b) => b.tasks);
+  titles = Object.fromEntries(tasks.map((t) => [t.id, t.title ?? t.id]));
+  const states = Object.fromEntries(tasks.map((t) => [t.id, t.state]));
+  const kinds = tasks.map((t) => describe(t, states).kind);
+  const count = (k) => kinds.filter((x) => x === k).length;
+
+  document.title = s.waiting.length ? `(${s.waiting.length}) Crew · ${s.run}` : `Crew · ${s.run}`;
+  document.getElementById('run').textContent = tech() ? `Crew · ${s.run}` : 'AI team progress';
+  document.getElementById('cost').textContent = tech() ? `${money(s.cost)} spent so far` : `${money(s.cost)} in AI costs so far`;
+
+  const intro = document.getElementById('intro');
+  intro.hidden = tech();
+  if (!tech()) {
+    intro.replaceChildren();
+    intro.append(el('b', null, 'How this works: '),
+      document.createTextNode('a lead AI splits the work into tasks. For each task, an AI developer builds it, automatic tests check it, and a separate AI reviewer must approve it before it ships. Tasks that depend on each other go in order.'));
+  }
+
+  const boss = document.getElementById('boss');
+  boss.classList.toggle('attn', s.waiting.length > 0);
+  const who = el('div');
+  who.append(el('div', 'who', tech() ? 'Boss (your Claude Code session)' : 'Lead AI (plans the work and approves what ships)'),
+    el('div', 'muted', s.waiting.length
+      ? `${tech() ? 'Needs to act on' : 'Has to decide on'}: ${s.waiting.map((w) => tech() ? `${w.id} (${STATE[w.state][1].toLowerCase()})` : `“${nameOf(w.id)}”`).join(', ')}`
+      : tech() ? 'Nothing is waiting on the boss right now.' : 'Nothing needs a decision right now.'));
+  const counts = el('div', 'counts');
+  const rows = tech()
+    ? [[count('working'), 'working'], [count('attn'), 'need the boss'], [count('queued') + count('paused'), 'waiting'], [count('finished'), 'finished']]
+    : [[count('working'), 'in progress'], [count('attn'), 'need a decision'], [count('queued') + count('paused'), 'up next'], [count('finished'), 'done']];
+  for (const [n, label] of rows) {
+    const c = el('span');
+    c.append(el('b', null, String(n)), document.createTextNode(label));
+    counts.append(c);
+  }
+  boss.replaceChildren(who, counts);
+
+  const root = document.getElementById('batches');
+  root.replaceChildren();
+  for (const b of s.batches) {
+    const col = el('div');
+    const allDone = b.tasks.every((t) => FINISHED.has(t.state));
+    const head = el('div', 'orch');
+    const name = el('div');
+    name.append(el('span', 'name', tech() ? `Batch “${b.name}”` : `Workstream: ${b.name}`),
+      el('span', 'muted', tech() ? ` · ${b.max_parallel} at a time${b.dry_run ? ' · dry run' : ''}` : ` · ${plural(b.tasks.length, 'task')}${b.dry_run ? ' · practice run' : ''}`));
+    const pill = b.orchestrator?.alive ? ['blue', tech() ? 'orchestrator running' : 'active'] : allDone ? ['green', 'finished'] : ['gray', tech() ? 'orchestrator stopped' : 'paused'];
+    head.append(name, el('span', `pill tone-${pill[0]}`, pill[1]));
+    const stack = el('div', 'stack');
+    // Active work first, then what needs a decision, then the queue, then what's finished.
+    const order = { working: 0, attn: 1, paused: 2, queued: 3, finished: 4 };
+    const sorted = [...b.tasks].sort((x, y) => order[describe(x, states).kind] - order[describe(y, states).kind]);
+    for (const t of sorted) stack.append(taskCard(t, s, describe(t, states)));
+    col.append(head, stack);
+    root.append(col);
+  }
+
+  renderFeed(s.events);
+}
+
+function taskCard(t, s, d) {
+  const compact = d.kind === 'finished' || d.kind === 'queued';
+  const card = el('div', `card task${compact ? ' compact' : ''}${d.kind === 'working' ? ' working' : ''}${d.kind === 'attn' ? ' attn' : ''}`);
+  const head = el('div', 'task-head');
+  const name = el('div');
+  name.append(el('div', 'task-title', t.title ?? t.id));
+  if (tech()) name.append(el('div', 'task-id mono', [t.id, t.issue != null ? `issue #${t.issue}` : null, t.version > 1 ? `plan v${t.version}` : null].filter(Boolean).join(' · ')));
+  else if (t.issue != null) name.append(el('div', 'task-id', `Request #${t.issue}`));
+  head.append(name, el('span', `pill tone-${d.tone}`, d.label));
+  card.append(head);
+
+  if (compact) {
+    const bits = [];
+    if (d.note) bits.push(d.note);
+    if (d.kind === 'finished' && t.attempts) {
+      if (tech()) {
+        if (t.pr) bits.push(`PR #${t.pr}`);
+        bits.push(plural(t.attempts, 'coder round') + (t.replans ? `, ${plural(t.replans, 'replan')}` : ''));
+      } else {
+        bits.push(t.attempts === 1 ? 'Got it right on the first try' : `Took ${t.attempts} attempts${t.replans ? ' and a plan change' : ''}`);
+      }
+    }
+    if (d.kind === 'finished') bits.push(money(t.cost));
+    card.append(el('div', 'line', bits.join(' · ')));
+    return card;
+  }
+
+  // What is happening right now, in one sentence.
+  const role = t.child && t.activity && !t.activity.done ? t.activity.role : null;
+  const now = el('div', `now${d.kind === 'working' ? '' : ' idle'}`);
+  if (d.kind === 'working') {
+    now.append(el('div', 'what', (DOING[t.phase] ?? [t.phase, t.phase])[tech() ? 1 : 0]));
+    let detail = null;
+    if (tech()) {
+      detail = role && t.activity.last ? `${t.activity.steps} tool calls so far · latest: ${shortPaths(t.activity.last.text)}`
+        : t.step ? `${prettyStep(t.step.text)} · started ${ago(t.step.at)}` : null;
+    } else {
+      detail = role ? `${plural(t.activity.steps, 'step')} so far` : t.step ? simpleStep(t.step.text) : null;
+    }
+    if (detail) now.append(el('div', 'detail clamp', detail));
+  } else {
+    now.append(el('div', 'what', d.note ?? ''));
+  }
+  card.append(now);
+
+  const steps = el('div', 'steps');
+  const at = t.phase === 'ready_to_merge' ? s.phases.length : s.phases.indexOf(t.phase);
+  const stepList = tech()
+    ? s.phases.map((p, i) => [STEP_TECH[p] ?? p, i, i])
+    : STEPS_SIMPLE.map(([label, phases]) => {
+      const idx = phases.map((p) => s.phases.indexOf(p)).filter((i) => i >= 0);
+      return [label, Math.min(...idx), Math.max(...idx)];
+    });
+  for (const [label, first, last] of stepList) {
+    const cls = at > last ? 'done' : at >= first ? `current${d.kind === 'working' ? '' : ' paused'}` : '';
+    steps.append(el('span', cls, label));
+  }
+  card.append(steps);
+
+  const round = t.round ?? 1;
+  const lastRound = round >= t.max_rounds;
+  if (!tech()) {
+    const facts = el('div', 'facts');
+    facts.append(el('span', lastRound ? 'bad' : null, lastRound
+      ? `Attempt ${round} of ${t.max_rounds}: last try before the lead AI steps in`
+      : `Attempt ${round} of ${t.max_rounds}`));
+    facts.append(el('span', 'muted', `${money(t.cost)} so far`));
+    card.append(facts);
+    if (t.findings.length) {
+      const p = el('div', 'problem');
+      p.append(el('b', null, 'Last attempt: '), document.createTextNode(`${simpleProblem(t.findings[0])} The AI developer is working on it.`));
+      card.append(p);
+    }
+    const open = openDetails.has(t.id);
+    const btn = el('button', 'more', open ? 'Hide technical details ▴' : 'Show technical details ▾');
+    btn.type = 'button';
+    btn.setAttribute('aria-expanded', String(open));
+    btn.onclick = () => { open ? openDetails.delete(t.id) : openDetails.add(t.id); render(snap); };
+    card.append(btn);
+    if (open) card.append(techBlock(t, role, lastRound));
+    return card;
+  }
+  card.append(techBlock(t, role, lastRound, true));
+  return card;
+}
+
+// Ids, models, checks, raw findings and process facts: the same block in technical mode and behind the button.
+function techBlock(t, role, lastRound, inline = false) {
+  const box = el('div', inline ? null : 'tech');
+  if (!inline) {
+    box.append(el('div', 'task-id mono', [t.id, t.issue != null ? `issue #${t.issue}` : null, t.version > 1 ? `plan v${t.version}` : null].filter(Boolean).join(' · ')));
+    if (role && t.activity.last) box.append(el('div', 'act', `${role} ▸ ${shortPaths(t.activity.last.text)}`));
+    else if (t.driver?.alive && t.step) box.append(el('div', 'act', `driver ▸ ${prettyStep(t.step.text)} · ${ago(t.step.at)}`));
+  }
+  const facts = el('div', 'facts');
+  facts.append(el('span', lastRound ? 'bad' : null, `Round ${t.round ?? 1} of ${t.max_rounds}${lastRound ? ' (last)' : ''}`));
+  const agents = el('span');
+  agents.append(el('span', role === 'coder' ? 'on' : null, `Coder ${t.models?.coder ?? '?'}`), document.createTextNode(' → '),
+    el('span', role === 'reviewer' ? 'on' : null, `Reviewer ${t.models?.reviewer ?? '?'}`));
+  facts.append(agents);
+  if (t.checks.length) {
+    const failed = t.checks.filter((c) => !c.ok);
+    facts.append(el('span', failed.length ? 'bad' : 'ok', failed.length ? `✗ ${failed.map((c) => c.id).join(', ')} failed` : `✓ ${t.checks.length} checks passed`));
+  }
+  box.append(facts);
+  if (t.findings.length) {
+    const p = el('div', 'problem');
+    p.append(el('b', null, t.findings.length > 1 ? `${t.findings.length} problems from the last round` : 'Problem from the last round'));
+    p.append(el('div', 'clamp', t.findings[0].problem));
+    box.append(p);
+  }
+  const foot = [money(t.cost)];
+  if (t.head) foot.push(`commit ${t.head}`);
+  if (t.pr) foot.push(`PR #${t.pr}`);
+  if (t.restarts) foot.push(`restarted ${t.restarts}×`);
+  if (t.driver?.alive) foot.push(`driver pid ${t.driver.pid} · heartbeat ${ago(t.heartbeat)}`);
+  box.append(el('div', 'foot', foot.join(' · ')));
+  return box;
+}
+
+// One plain sentence per event. Technical mode adds the task id and the agents' own summaries.
+function headline(e) {
+  const T = tech();
+  switch (e.type) {
+    case 'round':
+      if (e.step === 'reviewer') return e.verdict === 'approve'
+        ? (T ? `Reviewer approved (round ${e.round})` : 'AI reviewer approved the work')
+        : (T ? `Reviewer asked for changes (round ${e.round}${e.open ? `, ${e.open} open` : ''})` : 'AI reviewer asked for changes');
+      if (!T) return e.status === 'implemented' ? `AI developer finished attempt ${e.round}` : `AI developer paused on attempt ${e.round}`;
+      return `Coder finished round ${e.round}${e.status && e.status !== 'implemented' ? `: ${e.status.replace(/_/g, ' ')}` : ''}`;
+    case 'ready_to_merge': return T ? `Ready to merge${e.pr ? ` (PR #${e.pr})` : ''}` : 'Ready to ship';
+    case 'merged': return T ? 'Merged' : 'Shipped';
+    case 'needs_human': return T ? 'Done; issue left open' : 'Shipped';
+    case 'needs_replan': return T ? 'Asked for a new plan' : 'Asked the lead AI to adjust the plan';
+    case 'replanned': return T ? 'Plan revised' : 'Plan adjusted; work continues';
+    case 'rebase_needed': return T ? 'Base moved; syncing and re-checking' : 'Catching up with newer work';
+    case 'driver_launched': return T ? 'Driver started' : 'Work started';
+    case 'driver_restarted': return T ? 'Driver restarted' : 'Restarted after a hiccup';
+    case 'orchestrator_started': return T ? `Orchestrator for “${e.task}” started` : `Workstream “${e.task}” started`;
+    case 'batch_done': return T ? `Batch “${e.task}” finished` : `Workstream “${e.task}” finished`;
+    case 'triage': return T ? 'Triage ran' : 'Automatic troubleshooting ran';
+    case 'blocked': return T ? 'Blocked' : 'Stuck; needs a person';
+    case 'escalate': return T ? 'Escalated to the boss' : 'Handed to the lead AI to decide';
+    default: return e.type.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  }
+}
+const TASKLESS = new Set(['orchestrator_started', 'batch_done']);
+const BODY_TYPES = new Set(['round', 'needs_replan', 'replanned', 'escalate', 'blocked', 'help', 'triage', 'abandoned', 'retry']);
+
+function renderFeed(events) {
+  const feed = document.getElementById('events');
+  feed.replaceChildren();
+  const next = new Set();
+  for (const e of events) {
+    const key = `${e.ts}|${e.type}|${e.task}`;
+    next.add(key);
+    const body = tech() && BODY_TYPES.has(e.type) && e.text && !(e.type === 'round' && e.step === 'reviewer') ? e.text : null;
+    const row = el('div', `ev${seen.size && !seen.has(key) ? ' fresh' : ''}${body ? ' has-more' : ''}`);
+    const main = el('div');
+    main.append(el('div', 'head', headline(e)));
+    if (!TASKLESS.has(e.type)) main.append(el('div', tech() ? 'who mono' : 'who', tech() ? e.task : nameOf(e.task)));
+    if (body) main.append(el('div', `body${expanded.has(key) ? '' : ' clamp'}`, body));
+    row.append(el('div', 't', clock(e.ts)), main);
+    if (body) row.onclick = () => { expanded.has(key) ? expanded.delete(key) : expanded.add(key); renderFeed(events); };
+    feed.append(row);
+  }
+  seen = next;
+}
+
+const dot = document.getElementById('dot');
+const status = document.getElementById('status');
+const stream = new EventSource('/stream');
+stream.onmessage = (m) => {
+  const s = JSON.parse(m.data);
+  if (s.error) { status.textContent = s.error; return; }
+  dot.classList.add('on');
+  status.textContent = 'live';
+  render(s);
+};
+stream.onerror = () => { dot.classList.remove('on'); status.textContent = 'reconnecting…'; };
+// Keep the "x min ago" texts fresh between pushes.
+setInterval(() => snap && render(snap), 5000);
+</script>
+</body>
+</html>

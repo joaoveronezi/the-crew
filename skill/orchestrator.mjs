@@ -8,8 +8,8 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:f
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import {
-  DONE_FOR_DEPENDANTS, FINISHED, ROOT, worktreeOf, RUNNABLE, SKILL, WAITING_ON_BOSS, appendEvent, callClaude, contractPath,
-  identify, isRunning, killGroup, lastStatus, loadBatch, loadContract, log, now, readEvents, readJson, runDir, sleep, tail, writeJson,
+  DONE_FOR_DEPENDANTS, FINISHED, ROOT, RUNNABLE, SKILL, WAITING_ON_BOSS, appendEvent, callClaude, contractPath,
+  identify, isRunning, killGroup, lastStatus, loadBatch, loadContract, log, now, readEvents, readJson, runDir, sleep, tail, worktreeOf, writeJson,
 } from './lib.mjs';
 
 const [run, batchId] = process.argv.slice(2);
@@ -78,10 +78,10 @@ Contract: ${contractPath(run, id)} (locks: ${c.locks.join(', ') || 'none'})`;
     log(`triage ${id}: ${why}`);
     const r = await callClaude({
       role: 'triage', model: 'sonnet', prompt, budget: c.budget_usd.triage, timeoutMin: 20, cwd: ROOT,
-      logFile: join(runDir(run), 'logs', id, `triage-${d.triages}.jsonl`), ledger: { run, task: id, round: null, version: c.version },
+      logFile: join(runDir(run), 'logs', id, `triage-${d.triages}.jsonl`),
     });
     const { action, diagnosis, fixed } = r.ok ? r.output : { action: 'escalate', diagnosis: `triage call failed: ${r.failure}` };
-    emit('triage', id, { why, action, diagnosis, fixed, cost_usd: Math.round(r.cost * 100) / 100 });
+    emit('triage', id, { why, action, diagnosis, fixed });
     const state = lastStatus(readEvents(run), id)?.type ?? 'none';
     if (action === 'retry') {
       if (state === 'help') emit('retry', id, { reason: diagnosis });
