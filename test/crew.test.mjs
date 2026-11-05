@@ -173,3 +173,12 @@ test('sandbox paths: every top-level entry but the worktrees and .git, and .env 
   assert.deepEqual(names, ['.env', 'README.md', 'api', 'node_modules', 'src']);
   assert.deepEqual(envFiles(root).map((f) => f.slice(root.length + 1)).sort(), ['.env', 'api/.env.local']);
 });
+
+test('the example run in examples/ is a valid contract', async () => {
+  const { readFileSync } = await import('node:fs');
+  const dir = new URL('../examples/run/20260101-truncate-titles/', import.meta.url);
+  const raw = JSON.parse(readFileSync(new URL('contracts/WEB-TITLE-001.json', dir), 'utf8'));
+  const batch = JSON.parse(readFileSync(new URL(`batches/${raw.batch}.json`, dir), 'utf8'));
+  assert.deepEqual(shapeErrors(withDefaults(raw), { config: loadConfig(JSON.parse(readFileSync(new URL('../examples/crew.config.json', import.meta.url), 'utf8'))) }), []);
+  assert.ok(batch.tasks.includes(raw.id));
+});
