@@ -1,0 +1,30 @@
+{
+  "id": "WEB-TITLE-001",
+  "version": 1,
+  "issue": 50,
+  "title": "Truncate long titles in the list view",
+  "batch": "web",
+  "depends_on": [],
+  "branch": "agent/WEB-TITLE-001-truncate-titles",
+  "models": { "coder": "haiku", "reviewer": "sonnet" },
+  "allowed_files": [
+    { "path": "web/src/list/title.ts", "op": "edit" },
+    { "path": "web/src/list/title.test.ts", "op": "create" }
+  ],
+  "setup": ["npm --prefix web ci"],
+  "checks": [
+    { "id": "AC1", "cmd": "cd web && node --test src/list/title.test.ts", "expect_exit": 0 }
+  ],
+  "gates": ["npm --prefix web run lint", "npm --prefix web test"],
+  "max_rounds": 3,
+  "commit": "web: truncate long titles in the list view (WEB-TITLE-001)",
+  "pr": {
+    "title": "web: truncate long titles in the list view (WEB-TITLE-001)",
+    "summary": "List rows cut titles longer than 60 characters at a word boundary and add an ellipsis; the full title stays in the row's accessible label.",
+    "closes_issue": true
+  },
+  "issue_comment": "Shipped in {pr} ({merge}).",
+  "docs": [
+    { "file": "docs/STATUS.md", "find": "Next recommended: #50 WEB-TITLE-001", "replace": "#50 shipped in {pr} ({evidence}). Next recommended: #51" }
+  ]
+}

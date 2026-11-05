@@ -1,0 +1,8 @@
+{
+  "main_branch": "main",
+  "branch_prefix": "agent/",
+  "locks": ["e2e", "db"],
+  "ordering_paths": ["(^|/)package(-lock)?\\.json$", "(^|/)migrations?/", "(^|/)openapi\\.json$"],
+  "docs_check": "npm run check:docs",
+  "sandbox": { "allowed_domains": ["registry.npmjs.org"] }
+}
