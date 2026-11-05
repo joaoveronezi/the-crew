@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+# crew runtime state when the repo itself is used as a host
+.claude/loops/
+.worktrees/

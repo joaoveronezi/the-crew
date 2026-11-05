@@ -1,0 +1,14 @@
+{
+  "name": "the-crew",
+  "version": "0.1.0",
+  "description": "Run a batch of GitHub issues in parallel with Claude Code: a boss session plans contracts, deterministic scripts drive a coder and a reviewer through checks, PR and CI.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/crew.test.mjs",
+    "check": "node --check skill/lib.mjs && node --check skill/driver.mjs && node --check skill/orchestrator.mjs && node --check skill/crew.mjs && npm test"
+  }
+}
