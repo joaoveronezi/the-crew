@@ -1,0 +1,10 @@
+{
+  "baseBranch": "main",
+  "branchPrefix": "crew/",
+  "issues": { "file": "issues.json" },
+  "locks": { "db": "the local database used by integration tests" },
+  "sensitivePaths": ["(^|/)package-lock\\.json$", "^db/migrations/"],
+  "secretFiles": [".env", ".env.local"],
+  "network": { "allowedDomains": ["registry.npmjs.org"] },
+  "docsCheck": null
+}

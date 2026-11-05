@@ -1,0 +1,11 @@
+[
+  {
+    "id": "50",
+    "title": "Truncate long titles in the list view",
+    "status": "open",
+    "priority": "P1",
+    "body": "Titles longer than 60 characters overflow list rows.",
+    "acceptance": ["Rows show at most 60 characters, cut at a word boundary, with an ellipsis", "Screen readers still get the full title"]
+  },
+  { "id": "51", "title": "Sort the list by date", "status": "open", "depends_on": ["50"] }
+]

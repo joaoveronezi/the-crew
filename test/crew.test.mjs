@@ -231,3 +231,17 @@ test('no role may act on the remote through gh', () => {
   assert.ok(ROLE_TOOLS.reviewer.disallowed.includes('Bash(gh *)'));
   for (const sub of ['pr', 'issue', 'api', 'repo']) assert.ok(ROLE_TOOLS.triage.disallowed.includes(`Bash(gh ${sub} *)`));
 });
+
+test('the example run and configs in examples/ are valid', async () => {
+  const read = (path) => JSON.parse(readFileSync(new URL(`../examples/${path}`, import.meta.url), 'utf8'));
+  const raw = read('runs/20260101-truncate-titles/contracts/WEB-TITLE-1.json');
+  const batch = read(`runs/20260101-truncate-titles/batches/${raw.batch}.json`);
+  for (const mode of ['local', 'github']) {
+    const config = withConfigDefaults(read(`${mode}/crew.config.json`));
+    assert.deepEqual(shapeErrors(withDefaults(raw), { branchPrefix: config.branchPrefix, lockNames: Object.keys(config.locks) }), [], mode);
+  }
+  assert.ok(batch.tasks.includes(raw.id));
+  const issues = parseJsonIssues(readFileSync(new URL('../examples/local/issues.json', import.meta.url), 'utf8')).map(normalizeIssue);
+  assert.deepEqual(issueErrors(issues), []);
+  assert.ok(issues.some((i) => i.id === raw.issue));
+});

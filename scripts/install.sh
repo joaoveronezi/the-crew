@@ -22,10 +22,11 @@ rm -rf "$dest"
 mkdir -p "$(dirname "$dest")"
 cp -R "$src" "$dest"
 echo "Installed the crew skill in $dest"
+echo "Next: open Claude Code in the project and run /crew adapt"
 
 if [ -n "${repo:-}" ]; then
   missing=()
-  for p in .claude/loops/ .worktrees/; do
+  for p in .claude/crew/runs/ .claude/crew/locks/ .worktrees/; do
     git -C "$repo" check-ignore -q "$p" || missing+=("$p")
   done
   if [ ${#missing[@]} -gt 0 ]; then
