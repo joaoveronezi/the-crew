@@ -1,78 +1,81 @@
 # Configuration
 
-Each project has a `.claude/crew.config.json`, written by `/crew adapt` and committed with the project. Every field is optional. The full field reference, which is also what the boss reads, is [`skill/references/config.md`](../skill/references/config.md). This page covers the choices you're most likely to make.
+`/crew adapt` writes `.claude/crew.config.json` for your project; commit it. Every field is optional. A typical config for a Node project that uses GitHub:
 
-## Where issues come from
+```json
+{
+  "baseBranch": "main",
+  "issues": { "github": true },
+  "delivery": { "mode": "github" },
+  "locks": { "db": "the local Postgres used by integration tests" },
+  "sensitivePaths": ["(^|/)package-lock\\.json$", "^db/migrations/"],
+  "secretFiles": [".env", ".env.local"],
+  "docsCheck": "npm run lint:docs"
+}
+```
+
+Every field and its default: [config reference](../skill/references/config.md).
+
+## Issue sources
 
 ```jsonc
 { "issues": { "file": "issues.json" } }              // or "issues/", or "issues.md"
-{ "issues": { "github": true } }                      // GitHub Issues of this repo, via gh
-{ "issues": { "github": { "repo": "owner/name" } } }  // another repo's issues
+{ "issues": { "github": true } }                      // this repo's GitHub Issues
+{ "issues": { "github": { "repo": "owner/name" } } }  // another repo's
 { "issues": { "file": "TODO.md", "adapter": ".claude/crew/issues-adapter.mjs" } }  // anything else
-{ "issues": { "file": "export.csv", "adapter": "…", "writeBack": false } }         // read-only source
+{ "issues": { "file": "export.csv", "adapter": "…", "writeBack": false } }         // read-only
 ```
 
-Formats and the adapter contract: [issue sources](../skill/references/issues.md). The adapter template is [`skill/templates/issues-adapter.mjs`](../skill/templates/issues-adapter.mjs).
+The crew writes back only an issue's status (`open` → `in_progress` → `done`) and a dated note. File formats and the adapter contract: [issue sources](../skill/references/issues.md).
 
-## How approved work is delivered
+## Delivery
 
 ```jsonc
-{ "delivery": { "mode": "local" } }                    // default: squash-merge on this machine
-{ "delivery": { "mode": "github", "remote": "origin" } }  // push, PR, CI, merge the PR through gh
+{ "delivery": { "mode": "local" } }                       // default: squash-merge on this machine
+{ "delivery": { "mode": "github", "remote": "origin" } }  // a PR per task, merged after green CI
 ```
 
-See [delivery](how-it-works.md#delivery-local-or-pull-requests). In github mode, `gh` must be authenticated, and the repository needs CI on pull requests: the crew treats green checks as a merge requirement.
+github mode needs `gh` authenticated and CI that runs on pull requests. See [delivery](how-it-works.md#delivery-local-or-pull-requests).
+
+## Parallel safety
+
+- **`locks`:** machine-wide resources only one task may use at a time, such as a test database, a simulator or a fixed port. A contract names the locks it holds, and a single check can name its own.
+- **`sensitivePaths`:** regexes for files that two tasks must never change in parallel, such as lockfiles, migrations and API specs. `crew validate` makes such tasks depend on each other.
+
+## Sandbox
+
+- **`secretFiles`:** paths, matched at any depth, that coders and reviewers can never read.
+- **`network.allowedDomains`:** the only hosts their commands may reach, besides localhost. Add your package registries.
+
+See [security](security.md).
 
 ## Attribution
 
-Nothing is added to crew commits or PRs by default. To add a line:
+By default, nothing is added to crew commits or PRs. To add a line:
 
 ```json
 { "commitTrailer": "Co-Authored-By: …", "delivery": { "mode": "github", "prFooter": "…" } }
 ```
 
-## Shared resources and parallel safety
-
-```json
-{
-  "locks": { "db": "the local database used by integration tests", "sim": "the iOS simulator" },
-  "sensitivePaths": ["(^|/)package-lock\\.json$", "^db/migrations/", "(^|/)openapi\\.json$"]
-}
-```
-
-- **`locks`:** only one task at a time may hold a lock. A contract names the locks for the whole task, and each check names the ones it needs.
-- **`sensitivePaths`:** regexes. Two tasks that both touch one of them must be ordered with `depends_on`, even if they change different files. `crew validate` enforces it.
-
-## Sandbox
-
-```json
-{ "secretFiles": [".env", ".env.local"], "network": { "allowedDomains": ["registry.npmjs.org", "pypi.org"] } }
-```
-
-- **`secretFiles`:** paths, at any depth, that coders and reviewers can never read.
-- **`network.allowedDomains`:** the only hosts their commands may reach, besides localhost.
-
-See [security](security.md).
-
 ## Environment switches
 
-These turn off one cost optimization for a run. Set them in the environment of `crew start`; the orchestrator passes them on to its drivers.
+Each of these turns off one cost optimization when set to `0` in the environment of `crew start`:
 
-| variable | effect when `0` |
+| variable | turns off |
 | --- | --- |
-| `CREW_SHARED_PREFIX` | Don't pass `--exclude-dynamic-system-prompt-sections`. Each worktree then caches its own system prompt |
-| `CREW_CACHE_1H` | Don't request the 1-hour prompt-cache TTL. The default 5-minute TTL applies |
-| `CREW_CODER_RESUME` | Start a fresh coder session every round instead of resuming |
+| `CREW_SHARED_PREFIX` | the shared system prompt across worktrees |
+| `CREW_CACHE_1H` | the 1-hour cache (back to 5 minutes) |
+| `CREW_CODER_RESUME` | coder session resume between rounds |
 
 `CREW_ROOT` points the crew at a repository other than the current directory.
 
 ## Batches
 
-`batches/<batch>.json` in the run directory:
+The boss writes `batches/<batch>.json` in the run directory:
 
 ```json
 { "tasks": ["WEB-TITLE-1", "WEB-SORT-1"], "max_parallel": 2, "dry_run": false }
 ```
 
-- `max_parallel` bounds how many drivers run at once in the batch. Each driver can run builds and tests, so this is also your machine-load limit.
-- `dry_run: true` (what `/crew rehearse` sets) runs real coder/reviewer rounds, but the task is never merged, pushed or turned into a PR, and issue statuses don't change. Use it to rehearse contracts.
+- `max_parallel` is also your machine-load limit: each driver runs builds and tests.
+- `dry_run: true` is what `/crew rehearse` sets. Real rounds run, but nothing is merged, pushed or turned into a PR, and issue statuses don't change.

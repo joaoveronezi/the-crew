@@ -1,51 +1,43 @@
-# Security model
+# Security
 
-The crew runs code-writing models unattended. Their limits are enforced by the CLI and the operating system, not by asking politely in a prompt.
+The crew runs code-writing agents unattended, so their limits are enforced by Claude Code's CLI and the operating system, not by instructions in a prompt.
 
-## What each role can do
+## What each agent can do
 
-| role | tools | sandbox | can't |
+| agent | tools | sandbox | can't |
 | --- | --- | --- | --- |
-| coder | Read, Edit, Write, Bash, Grep, Glob | OS sandbox | commit, push, reset, branch, merge, stash or other git writes (`git restore` is allowed); any `gh`; MCP servers |
-| reviewer | Read, Bash, Grep, Glob | OS sandbox | any git write, `git add/rm/mv/apply`; any `gh`; MCP servers. Anything it leaves in the worktree is reset |
-| triage | Read, Bash, Grep, Glob | none (it may need to start a database or stop a stray process) | git writes, `git add/rm`; `gh pr`, `gh issue`, `gh api`, `gh repo` (it may read CI logs with `gh run view`); MCP servers |
+| coder | Read, Edit, Write, Bash, Grep, Glob | OS sandbox | commit, push, merge, reset, branch or stash (`git restore` is allowed); use `gh`; load MCP servers |
+| reviewer | Read, Bash, Grep, Glob | OS sandbox | any git write; use `gh`; load MCP servers. Anything it leaves in the worktree is reset |
+| triage | Read, Bash, Grep, Glob | none, because it may need to start a database or stop a stray process | git writes; `gh pr`, `gh issue`, `gh api`, `gh repo` (it may read CI logs); load MCP servers |
 
-Every call runs with `--strict-mcp-config` and no MCP config, so no MCP servers load, and with `--tools` / `--disallowedTools` limiting the tools as above. All three return JSON validated against a schema (`--json-schema`), so the driver never routes on free-form prose.
+Every agent answers in JSON checked against a schema, so the scripts never act on free-form text.
 
-## The OS sandbox (coder and reviewer)
+## The sandbox (coder and reviewer)
 
-Each call gets Claude Code `sandbox` settings through `--settings`:
+- **Writes:** only the task's worktree, temp directories and package caches.
+- **Network:** only `network.allowedDomains` (the npm registry by default) and localhost.
+- **Reads:** never home credentials (`~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.npmrc`, `~/.docker`, `~/.kube`, …) or the project's `secretFiles`.
+- **Fails closed:** if the sandbox isn't available on the machine, the call doesn't run at all. There's no unsandboxed fallback.
 
-- **Writes.** Bash, and everything it spawns, may write only to the task's worktree, its git admin directory, temp directories and package caches.
-- **Network.** It may reach only `network.allowedDomains` (the npm registry by default) and localhost.
-- **Reads.** It may not read home credentials (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube`, `~/.azure`, `~/.config/gcloud`) or the project's `secretFiles`.
-- **Fails closed.** `failIfUnavailable` and `allowUnsandboxedCommands: false` mean there's no unsandboxed fallback. If the sandbox is unavailable on the machine, the call doesn't run at all.
+File tools aren't covered by the OS sandbox, so permission rules cover them: no reading credentials or secret files, and no editing anything in your main checkout outside the task's worktree.
 
-Read/Edit/Write aren't OS-sandboxed, so permission deny rules cover them:
-- no reading credentials or secret files;
-- no editing any top-level entry of the main checkout except the worktree folder, which covers the crew's own files, its state and the issue files;
-- no editing home dotfiles.
+## What the scripts guarantee
 
-## What the scripts enforce
+- **Scope.** A changed file outside the contract's `allowed_files` is never committed. `crew validate` refuses contracts that would let a task edit the issue files or the crew itself.
+- **Git.** Only the scripts commit, push, open PRs and update issues. Nothing is ever force-pushed or rebased.
+- **Merges.** `crew merge` refuses unless the task is approved, its dependencies are merged, and the commit being merged is exactly the one that was checked. In github mode, CI must also be green and GitHub must report the PR mergeable.
+- **Local mode sends nothing anywhere.** No pushes and no PRs.
 
-- **Scope.** The driver diffs the whole branch against its base, untracked files included. Any path outside `allowed_files` is a finding and is never committed. `crew validate` refuses contracts that would let a task edit the issue files or the crew itself.
-- **Git and the remote.** Only the driver, `crew merge` and `crew wrapup` commit, and in github mode push, open PRs and update issues. Nothing is ever force-pushed or rebased.
-- **Merges.** `crew merge` refuses unless:
-  - the task is `ready_to_merge` and its dependencies are merged;
-  - **local mode:** the branch tip is the approved commit and already contains the current base;
-  - **github mode:** the PR head is the approved commit, every check is green, and GitHub reports it mergeable.
-- **Nothing leaves the machine in local mode.** The driver never pushes, and the boss's authorization for a run covers local merges only.
+## What stays your responsibility
 
-## What you still own
-
-- **Contracts.** The crew does exactly what the contracts allow. Read the plan before a run starts (`/crew plan-only`), especially `allowed_files`, `setup` and the check commands: the driver runs them outside the sandbox, as you.
-- **The adapter.** A project's issue adapter is code that the crew imports and runs. Review it like any other code before committing it.
-- **Triage runs outside the sandbox.** It may run Docker and stop processes. Its git writes and remote `gh` actions are denied, but it's a capable shell on your machine.
-- **Secrets in the repo.** The deny rules cover `secretFiles` and common credential directories, not secrets committed to source files or kept elsewhere.
-- **CI, in github mode.** The crew trusts your CI's verdict. Weak CI checks give weak protection.
+- **The contracts.** Check commands and `setup` run outside the sandbox, as you. Read the plan before the first run (`/crew plan-only`).
+- **The issue adapter.** If `/crew adapt` writes one, it's code the crew runs. Review it before committing it.
+- **Triage.** It's an unsandboxed shell on your machine: it can't write to git or GitHub, but it can run Docker and stop processes.
+- **Secrets in the repo.** The rules cover `secretFiles` and common credential directories, not secrets committed to source files.
+- **Your CI, in github mode.** The crew trusts its verdict. Weak checks give weak protection.
 
 ## Known limits
 
-- On macOS the sandbox blocks git over SSH, Docker and Apple Events inside coder/reviewer Bash. The driver runs every check outside the sandbox, so this only limits the coder's own self-checks.
-- Heavy native toolchains (simulators, IDE build systems) are untested inside the sandbox. Leave them to the contract's checks and gates.
-- `--permission-mode auto` applies to every call. A denied action fails that call, the driver asks for help, and triage or the boss decides. A denial is never retried through another session.
+- On macOS, the sandbox blocks git over SSH, Docker and Apple Events inside coder and reviewer commands. The driver runs every check outside the sandbox, so this only limits the coder's own self-checks.
+- Heavy native toolchains (simulators, IDE builds) are untested inside the sandbox. Leave them to the contract's checks.
+- A permission denial fails that call. The driver asks for help, and triage or the boss decides. A denial is never retried another way.
