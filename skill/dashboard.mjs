@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Live, read-only dashboard for a crew run: boss → orchestrators → drivers → coder/reviewer, plus the event feed.
+// Live, read-only dashboard for a crew run, laid out like a chat: one conversation per task in which the boss,
+// orchestrator, driver, checks, coder and reviewer talk, plus an "everyone" channel for the whole run.
 //   node .claude/skills/crew/dashboard.mjs <run-id | run-dir> [--port 4777]
 // Serves on 127.0.0.1 only and never writes anything. It reads the run's files directly (no lib.mjs import), so it
 // also works on older run layouts (`.claude/loops/<run>` with PRs and CI).
@@ -93,10 +94,46 @@ function driverStep(task) {
   return m ? { at: m[1], text: clip(m[2], 200) } : null;
 }
 
-function eventSummary(e) {
+// The reviewer's findings live only in its own log. A replan restarts the round numbers and overwrites
+// r<n>-reviewer.jsonl, so a log written well after the event belongs to a later review with the same number.
+const reviews = new Map();
+function reviewOutput(task, round, ts) {
+  const file = join(RUN_DIR, 'logs', task, `r${round}-reviewer.jsonl`);
+  if (!existsSync(file)) return null;
+  const mtime = statSync(file).mtimeMs;
+  if (mtime > Date.parse(ts) + 120_000) return null;
+  const key = `${file}|${mtime}`;
+  if (!reviews.has(key)) {
+    let out = null;
+    for (const line of readTail(file).split('\n')) {
+      let msg;
+      try { msg = JSON.parse(line); } catch { continue; }
+      if (msg.type === 'result' && msg.structured_output) out = msg.structured_output;
+    }
+    reviews.set(key, out);
+  }
+  return reviews.get(key);
+}
+
+// One event as a message in the task's conversation. The page words it; this only picks and clips the fields.
+function message(e) {
   const d = e.data ?? {};
-  return clip(d.reason ?? d.summary ?? (d.verdict ? `${d.step} ${d.verdict}` : null) ?? (d.step ? `${d.step} ${d.status ?? ''}` : null)
-    ?? (d.pr ? `PR #${d.pr}` : null) ?? (d.merge ? `merge ${String(d.merge).slice(0, 7)}` : null) ?? (d.tasks ? String(d.tasks) : '') ?? '', 220);
+  const m = { ts: e.ts, type: e.type, by: e.by };
+  for (const k of ['round', 'step', 'status', 'verdict', 'open', 'pr', 'rounds', 'cost_usd', 'dry_run', 'passed', 'failed']) if (d[k] != null) m[k] = d[k];
+  if (d.summary) m.summary = clip(d.summary, 4000);
+  if (d.reason) m.reason = clip(d.reason, 1000);
+  if (d.tasks) m.tasks = clip(String(d.tasks), 400);
+  if (Array.isArray(d.findings)) m.findings = d.findings.slice(0, 5).map((f) => clip(f.problem ?? f.key, 300));
+  if (e.type === 'round' && d.step === 'reviewer') {
+    const r = reviewOutput(e.task, d.round, e.ts);
+    if (r) m.review = {
+      blocking: (r.blocking ?? []).slice(0, 8).map((f) => ({ severity: f.severity, file: f.file, line: f.line, problem: clip(f.problem, 400) })),
+      still_open: (r.previous ?? []).filter((p) => p.status !== 'fixed').map((p) => p.id),
+      failed_acs: (r.acceptance ?? []).filter((a) => a.result === 'fail').map((a) => clip(`${a.id}: ${a.evidence}`, 300)),
+      notes: (r.non_blocking ?? []).length,
+    };
+  }
+  return m;
 }
 
 function snapshot() {
@@ -132,6 +169,8 @@ function snapshot() {
         checks: (d?.checks ?? []).map((ch) => ({ id: ch.id, ok: ch.ok })),
         findings: (d?.findings ?? []).slice(0, 3).map((x) => ({ source: x.source, problem: clip(x.problem ?? x.key, 200) })),
         activity: activity(id), step: driverStep(id),
+        brief: c.summary ? clip(c.summary, 1500) : null,
+        talk: events.filter((e) => e.task === id).map(message),
       };
     });
     return { name, max_parallel: b.max_parallel ?? 2, dry_run: !!b.dry_run, orchestrator: orch ? { pid: orch.proc?.pid, alive: alive(orch.proc) } : null, tasks };
@@ -143,10 +182,8 @@ function snapshot() {
     cost: all.reduce((s, t) => s + t.cost, 0),
     waiting: all.filter((t) => WAITING_ON_BOSS.includes(t.state)).map((t) => ({ id: t.id, state: t.state })),
     batches,
-    events: events.slice(-60).reverse().map((e) => {
-      const { round, step, status, verdict, open, pr } = e.data ?? {};
-      return { ts: e.ts, type: e.type, task: e.task, by: e.by, round, step, status, verdict, open, pr, text: eventSummary(e) };
-    }),
+    // Run-level messages (a batch starting or finishing) belong to no task's conversation.
+    talk: events.filter((e) => ['orchestrator_started', 'batch_done'].includes(e.type)).map((e) => ({ ...message(e), batch: e.task })),
   };
 }
 
