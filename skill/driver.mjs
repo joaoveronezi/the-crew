@@ -146,6 +146,7 @@ async function verify() {
   }
   save({ checks: results.map(({ out, ...rest }) => rest) });
   const failed = results.filter((r) => !r.ok);
+  emit('checks', { round: st.round, passed: results.filter((r) => r.ok).map((r) => r.id), failed: failed.map((r) => ({ id: r.id, code: r.code })) });
   if (failed.length && st.coder_blocked) { save({ resume_phase: 'code', coder_blocked: null }); stop('help', { reason: `coder blocked and checks fail outside the sandbox too: ${st.coder_blocked}`, failed: failed.map((r) => r.id) }); }
   if (st.coder_blocked) save({ coder_blocked: null });
   if (failed.length) return nextRound(failed.map((r) => ({ source: 'check', key: `${r.id}#${outputKey(r.out)}`, problem: `${r.id} \`${r.cmd}\` exited ${r.code}`, output: r.out })));

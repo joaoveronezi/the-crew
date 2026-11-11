@@ -82,7 +82,7 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
    - **`needs_replan`** (or your own veto because the contract was wrong) → fix only that contract: the `.md` and the `.json` together, `version` +1, and say in the `.md` what changed and that the branch already holds the old version. `crew validate`, then `crew event <run> replanned <id> '{"reason":"…"}'`. New product scope means `blocked`; tell the user.
    - **`escalate`** → decide: `retry`, `replanned`, `blocked` or `abandoned`. Ask the user only for product decisions.
    - **`blocked`** → tell the user in one line. Independent tasks continue.
-   - **`round`**, **`triage`**, **`driver_restarted`** → informational. Act only if restarts keep climbing or a coder reports something odd.
+   - **`round`**, **`checks`**, **`triage`**, **`driver_restarted`** → informational. Act only if restarts keep climbing or a coder reports something odd.
    - **`batch_done`** → when every batch is done, go to Wrap-up.
 4. Keep turns lean. Never edit a driver's worktree or commit for a task yourself. If a task needs a human-level fix, replan it.
 
@@ -99,4 +99,4 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
 - **stop**: `crew stop <run>` kills orchestrators, drivers and their `claude -p` calls. Branches and worktrees stay, and nothing is merged.
 - **resume**: `crew status <run>`. Then `crew start <run>`: it skips live orchestrators, and drivers resume from their status files. Continue at Run step 2. `crew merge` recognizes a task already merged before a crash (by its `Crew-Task` trailer) and just records it.
 
-Anyone can watch a task live with `crew watch <run> <id>`, or the whole run in a browser with `node .claude/skills/crew/dashboard.mjs <run>` (http://127.0.0.1:4777, read-only). Offer the dashboard when the user wants to see what the crew is doing.
+Anyone can watch a task live with `crew watch <run> <id>`, or the whole run in a browser with `node .claude/skills/crew/dashboard.mjs <run>` (http://127.0.0.1:4777, read-only, laid out as a chat between the agents). Offer the dashboard when the user wants to see what the crew is doing.

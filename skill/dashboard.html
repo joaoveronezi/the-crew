@@ -7,111 +7,130 @@
 <style>
   :root {
     --bg: #f5f6f8; --card: #fff; --sunk: #eef0f4; --ink: #1b2130; --muted: #5f6a80; --line: #dde1e8;
-    --blue: #2563eb; --green: #15803d; --amber: #b45309; --red: #c2410c; --gray: #7b8496;
-    --blue-bg: #e8effd; --green-bg: #e7f5ec; --amber-bg: #fdf3e3; --red-bg: #fdece4;
+    --blue: #2563eb; --green: #15803d; --amber: #b45309; --red: #c2410c; --gray: #7b8496; --violet: #7c3aed; --teal: #0f766e;
+    --blue-bg: #e8effd; --green-bg: #e7f5ec; --amber-bg: #fdf3e3; --red-bg: #fdece4; --violet-bg: #f1eafe; --teal-bg: #e3f4f1;
+    --mine: #2563eb; --mine-ink: #fff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #10131a; --card: #191e28; --sunk: #222936; --ink: #e8ebf1; --muted: #9aa3b5; --line: #2c3442;
-      --blue: #7aa2ff; --green: #5ccf8d; --amber: #f0b45a; --red: #ff8a65; --gray: #7f889b;
-      --blue-bg: #1c2a4a; --green-bg: #173326; --amber-bg: #3a2c15; --red-bg: #3d2119;
+      --blue: #7aa2ff; --green: #5ccf8d; --amber: #f0b45a; --red: #ff8a65; --gray: #7f889b; --violet: #b69bff; --teal: #5fd0c0;
+      --blue-bg: #1c2a4a; --green-bg: #173326; --amber-bg: #3a2c15; --red-bg: #3d2119; --violet-bg: #2b2148; --teal-bg: #133430;
+      --mine: #2f5bd3; --mine-ink: #fff;
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86em; }
   .muted { color: var(--muted); }
   button { font: inherit; color: inherit; }
 
-  header { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
-  h1 { font-size: 18px; margin: 0; }
+  /* ---- Top bar */
+  .top { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+  h1 { font-size: 17px; margin: 0; }
   .live { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gray); }
   .dot.on { background: var(--green); animation: pulse 1.6s infinite; }
   @keyframes pulse { 50% { opacity: .35; } }
   .modes { margin-left: auto; display: inline-flex; background: var(--sunk); border-radius: 999px; padding: 3px; }
-  .modes button { border: 0; background: none; padding: 5px 14px; border-radius: 999px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .modes button { border: 0; background: none; padding: 4px 12px; border-radius: 999px; font-size: 13px; cursor: pointer; color: var(--muted); }
   .modes button[aria-pressed="true"] { background: var(--card); color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgb(0 0 0 / .15); }
 
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; padding: 16px; max-width: 1500px; margin: 0 auto; }
-  @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
-  section, aside { min-width: 0; }
-  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 8px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  /* ---- Two panes: conversations | chat */
+  .app { flex: 1; min-height: 0; display: grid; grid-template-columns: 330px minmax(0, 1fr); }
+  .list { min-height: 0; overflow: auto; border-right: 1px solid var(--line); background: var(--card); }
+  .chat { min-height: 0; display: flex; flex-direction: column; }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; }
+    .app.reading .list, .app:not(.reading) .chat { display: none; }
+  }
 
-  .intro { margin-bottom: 16px; font-size: 14px; color: var(--muted); }
-  .intro b { color: var(--ink); }
-  .boss { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-  .boss.attn { border-color: var(--amber); background: var(--amber-bg); }
-  .boss .who { font-weight: 600; }
-  .counts { display: flex; flex-wrap: wrap; gap: 14px; font-size: 14px; }
-  .counts b { font-size: 18px; margin-right: 4px; }
+  .waiting { margin: 10px; padding: 8px 12px; border-radius: 10px; background: var(--amber-bg); color: var(--amber); font-size: 13px; font-weight: 600; }
+  .group { padding: 14px 16px 4px; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+  .conv { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 2px 10px; width: 100%; padding: 9px 16px; border: 0; background: none; text-align: left; cursor: pointer; }
+  .conv:hover { background: var(--sunk); }
+  .conv[aria-current="true"] { background: var(--blue-bg); }
+  .conv .av { grid-row: span 2; align-self: center; }
+  .conv .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv .when { font-size: 12px; color: var(--muted); text-align: right; }
+  .conv .prev { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv .prev.typing { color: var(--blue); font-style: italic; }
+  .conv .side { display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+  .badge { min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--blue); color: #fff; font-size: 12px; font-weight: 700; text-align: center; }
 
-  .batches { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 20px; align-items: start; }
-  .orch { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; }
-  .orch .name { font-weight: 600; }
-  .stack { display: grid; gap: 10px; }
+  /* Avatars: a task's ring shows its state; a speaker's colour stays the same everywhere. */
+  .av { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; flex: none; }
+  .av.sm { width: 32px; height: 32px; font-size: 13px; }
+  .ring-blue { box-shadow: 0 0 0 2px var(--blue); } .ring-green { box-shadow: 0 0 0 2px var(--green); }
+  .ring-amber { box-shadow: 0 0 0 2px var(--amber); } .ring-red { box-shadow: 0 0 0 2px var(--red); } .ring-gray { box-shadow: 0 0 0 2px var(--line); }
+  .c-blue { color: var(--blue); background: var(--blue-bg); } .c-green { color: var(--green); background: var(--green-bg); }
+  .c-amber { color: var(--amber); background: var(--amber-bg); } .c-red { color: var(--red); background: var(--red-bg); }
+  .c-violet { color: var(--violet); background: var(--violet-bg); } .c-teal { color: var(--teal); background: var(--teal-bg); }
+  .c-gray { color: var(--muted); background: var(--sunk); }
 
-  .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; white-space: nowrap; }
-  .tone-blue { color: var(--blue); background: var(--blue-bg); }
-  .tone-green { color: var(--green); background: var(--green-bg); }
-  .tone-amber { color: var(--amber); background: var(--amber-bg); }
-  .tone-red { color: var(--red); background: var(--red-bg); }
-  .tone-gray { color: var(--muted); background: var(--sunk); }
+  .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 999px; white-space: nowrap; }
 
-  .task-head { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
-  .task-title { font-weight: 600; font-size: 16px; }
-  .task-id { font-size: 12px; color: var(--muted); }
-  .task.compact { padding: 10px 16px; }
-  .task.compact .task-title { font-size: 15px; font-weight: 500; }
-  .task.working { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
-  .task.attn { border-color: var(--amber); }
-  .line { margin-top: 4px; font-size: 13px; color: var(--muted); }
-
-  .now { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--blue-bg); }
-  .now .what { font-weight: 600; color: var(--blue); }
-  .now .detail { margin-top: 2px; font-size: 13px; overflow-wrap: anywhere; }
-  .now.idle { background: var(--sunk); }
-  .now.idle .what { color: var(--muted); }
-
-  .steps { display: flex; gap: 4px; margin-top: 12px; }
-  .steps span { flex: 1; text-align: center; font-size: 11px; padding: 4px 0; border-radius: 4px; background: var(--sunk); color: var(--muted); }
+  /* ---- Chat header */
+  .chat-head { display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+  .chat-head .info { min-width: 0; flex: 1; }
+  .chat-head .title { font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-head .sub { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+  .back { display: none; border: 0; background: none; font-size: 22px; line-height: 1; padding: 4px 6px; cursor: pointer; color: var(--blue); }
+  @media (max-width: 760px) { .back { display: block; } }
+  .steps { display: flex; gap: 3px; margin-top: 6px; max-width: 520px; }
+  .steps span { flex: 1; text-align: center; font-size: 11px; padding: 2px 0; border-radius: 4px; background: var(--sunk); color: var(--muted); }
   .steps span.done { background: var(--green-bg); color: var(--green); }
   .steps span.current { background: var(--blue); color: #fff; font-weight: 600; }
   .steps span.current.paused { background: var(--gray); }
 
-  .facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 13px; }
-  .facts .on { color: var(--blue); font-weight: 600; }
-  .ok { color: var(--green); }
-  .bad { color: var(--red); }
+  /* ---- Messages */
+  .msgs { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 8px; }
+  .msg { display: flex; gap: 10px; align-items: flex-end; max-width: 760px; margin-top: 14px; }
+  .msg.cont { margin-top: 3px; }
+  .msg.cont .av { visibility: hidden; height: 0; }
+  .msg.mine { margin-left: auto; flex-direction: row-reverse; }
+  .msg .col { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+  .msg.mine .col { align-items: flex-end; }
+  .msg .who { font-size: 12px; color: var(--muted); margin: 0 4px 3px; }
+  .msg .who b { color: var(--ink); font-weight: 600; }
+  .msg .who .on-task { color: var(--blue); }
+  .bubble { max-width: 100%; padding: 8px 12px; border-radius: 16px; border-bottom-left-radius: 5px; background: var(--card); border: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .msg.mine .bubble { background: var(--mine); color: var(--mine-ink); border-color: transparent; border-radius: 16px; border-bottom-right-radius: 5px; }
+  .bubble.good { background: var(--green-bg); border-color: transparent; }
+  .bubble.warn { background: var(--amber-bg); border-color: transparent; }
+  .bubble.bad { background: var(--red-bg); border-color: transparent; }
+  .bubble .lead { font-weight: 600; }
+  .bubble code { background: var(--sunk); padding: 0 4px; border-radius: 4px; }
+  .msg.mine .bubble code { background: rgb(255 255 255 / .18); }
+  .bubble ul { margin: 6px 0 0; padding-left: 18px; white-space: normal; }
+  .bubble li { margin: 3px 0; }
+  .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 7; overflow: hidden; }
+  .more { margin: 3px 6px 0; border: 0; background: none; padding: 0; color: var(--blue); font-size: 13px; cursor: pointer; }
+  .msg.mine .more { color: var(--blue); }
+  .stamp { font-size: 11px; color: var(--muted); margin: 3px 6px 0; }
 
-  .problem { margin-top: 10px; padding: 8px 12px; border-left: 3px solid var(--red); background: var(--red-bg); border-radius: 0 6px 6px 0; font-size: 13px; }
-  .problem b { color: var(--red); }
-  .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+  .note { text-align: center; margin: 14px auto 0; max-width: 560px; font-size: 12px; color: var(--muted); }
+  .note span { display: inline-block; padding: 3px 12px; border-radius: 999px; background: var(--sunk); }
+  .note.intro span { border-radius: 12px; padding: 8px 14px; text-align: left; font-size: 13px; }
+  .fresh .bubble, .note.fresh span { animation: flash 2.5s; }
+  @keyframes flash { from { box-shadow: 0 0 0 3px var(--blue); } }
+  .empty { margin: 40px auto; text-align: center; color: var(--muted); max-width: 420px; }
 
-  .foot { margin-top: 10px; font-size: 12px; color: var(--muted); }
-  .more { margin-top: 10px; border: 0; background: none; padding: 0; color: var(--blue); font-size: 13px; cursor: pointer; }
-  .more:hover { text-decoration: underline; }
-  .tech { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
-  .tech .facts:first-child, .tech .problem:first-child { margin-top: 0; }
-  .act { margin-top: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--sunk); border-radius: 6px; padding: 6px 8px; overflow-wrap: anywhere; }
-
-  .feed { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
-  @media (max-width: 960px) { .feed { position: static; max-height: none; } }
-  .ev { display: grid; grid-template-columns: 62px 1fr; gap: 0 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
-  .ev:last-child { border: 0; }
-  .ev.has-more { cursor: pointer; }
-  .ev .t { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .ev .head { font-weight: 600; }
-  .ev .who { color: var(--muted); font-size: 12px; }
-  .ev .body { color: var(--muted); margin-top: 2px; }
-  .ev .body.clamp { -webkit-line-clamp: 2; }
-  .ev.fresh { animation: flash 2.5s; }
-  @keyframes flash { from { background: var(--blue-bg); } }
+  /* ---- Live "typing" lines and the read-only composer */
+  .typing { padding: 0 16px; }
+  .typing .t { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); padding: 4px 0; overflow: hidden; }
+  .typing .t .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dots { display: inline-flex; gap: 3px; padding: 6px 9px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); flex: none; }
+  .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); animation: bounce 1.2s infinite; }
+  .dots i:nth-child(2) { animation-delay: .15s; } .dots i:nth-child(3) { animation-delay: .3s; }
+  @keyframes bounce { 30% { transform: translateY(-3px); opacity: 1; } 0%, 60%, 100% { opacity: .4; } }
+  @media (prefers-reduced-motion: reduce) { .dots i, .dot.on, .fresh .bubble, .note.fresh span { animation: none; } }
+  .composer { margin: 8px 16px 12px; padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-size: 13px; color: var(--muted); }
 </style>
 </head>
 <body>
-<header>
+<header class="top">
   <h1 id="run">Crew</h1>
   <span id="cost" class="muted"></span>
   <span class="live"><span id="dot" class="dot"></span><span id="status">connecting…</span></span>
@@ -120,17 +139,15 @@
     <button type="button" data-mode="tech">Technical</button>
   </div>
 </header>
-<main>
-  <section>
-    <div id="intro" class="intro"></div>
-    <div id="boss" class="card boss"></div>
-    <div id="batches" class="batches"></div>
+<div id="app" class="app">
+  <nav id="list" class="list" aria-label="Conversations"></nav>
+  <section class="chat" aria-label="Conversation">
+    <div id="head" class="chat-head"></div>
+    <div id="msgs" class="msgs"></div>
+    <div id="typing" class="typing"></div>
+    <div id="composer" class="composer"></div>
   </section>
-  <aside class="card feed">
-    <h2>What happened</h2>
-    <div id="events"></div>
-  </aside>
-</main>
+</div>
 <script>
 // Everything from the run is rendered with textContent: logs and agent output can contain anything.
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -142,96 +159,225 @@ const ago = (iso) => {
 const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const money = (n) => `$${(n ?? 0).toFixed(2)}`;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const store = (key, value) => { try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch { /* storage blocked: not remembered */ } return null; };
 
-// ---- Level of detail. "simple" is for anyone; "tech" adds ids, models, commands and raw agent output.
-let mode = 'simple';
-try { mode = localStorage.getItem('crew-mode') === 'tech' ? 'tech' : 'simple'; } catch { /* storage blocked: default */ }
-const openDetails = new Set(); // task ids whose details are open in simple mode
+// ---- Level of detail. "simple" is for anyone; "tech" adds ids, models, commands, files and exit codes.
+let mode = store('crew-mode') === 'tech' ? 'tech' : 'simple';
 const tech = () => mode === 'tech';
 for (const b of document.querySelectorAll('.modes button')) {
-  b.onclick = () => {
-    mode = b.dataset.mode;
-    try { localStorage.setItem('crew-mode', mode); } catch { /* not remembered, still works */ }
-    if (snap) render(snap);
-  };
+  b.onclick = () => { mode = b.dataset.mode; store('crew-mode', mode); if (snap) render(snap); };
 }
 
-// ---- Words for each level.
+// ---- Who talks. The boss is "you" (your Claude Code session), so its messages sit on the right.
+const WHO = {
+  boss: { name: ['Lead AI', 'Boss'], letter: 'B', color: 'blue', mine: true },
+  orchestrator: { name: ['Scheduler', 'Orchestrator'], letter: 'O', color: 'gray' },
+  driver: { name: ['Coordinator', 'Driver'], letter: 'D', color: 'gray' },
+  coder: { name: ['Developer', 'Coder'], letter: 'C', color: 'violet' },
+  reviewer: { name: ['Reviewer', 'Reviewer'], letter: 'R', color: 'teal' },
+  checks: { name: ['Tests', 'Checks'], letter: '✓', color: 'green' },
+  triage: { name: ['Troubleshooter', 'Triage'], letter: 'T', color: 'amber' },
+};
+const who = (from) => WHO[from] ?? WHO.driver;
+const nameOf = (from) => who(from).name[tech() ? 1 : 0];
+const at = (from) => `@${nameOf(from)}`;
+
+// ---- Task state (unchanged from the card dashboard).
 const STEPS_SIMPLE = [['Getting ready', ['prepare']], ['Building', ['code']], ['Testing', ['verify']], ['Reviewing', ['review']], ['Finishing', ['sync', 'publish', 'ci', 'handoff']]];
 const STEP_TECH = { prepare: 'Setup', code: 'Code', verify: 'Checks', review: 'Review', sync: 'Sync', publish: 'Push', ci: 'CI', handoff: 'Report' };
 const DOING = {
   prepare: ['Getting a private copy of the project ready', 'Setting up the worktree'],
-  code: ['An AI developer is building this', 'Coder is writing code'],
-  verify: ['Automatic tests are checking the work', 'Running the checks'],
-  review: ['An AI reviewer is checking the work', 'Reviewer is reviewing the change'],
+  code: ['Building', 'Writing code'],
+  verify: ['Running the automatic tests', 'Running the checks'],
+  review: ['Reviewing the work', 'Reviewing the change'],
   sync: ['Catching up with the latest version of the project', 'Bringing in the latest base branch'],
   publish: ['Packaging the change for approval', 'Pushing the branch and opening the PR'],
   ci: ['Running the final test suite', 'Waiting for CI'],
   handoff: ['Writing a summary of the work', 'Writing the hand-off report'],
 };
-// state → [simple label, tech label, tone, simple note, tech note]
+// state → [simple label, tech label, tone]
 const STATE = {
-  ready_to_merge: ['Ready to ship', 'Ready to merge', 'amber', 'Passed every test and review. Waiting for the lead AI to ship it.', 'Approved and green. Waiting for the boss to merge.'],
-  needs_replan: ['Needs attention', 'Needs a new plan', 'amber', 'The plan for this task needs adjusting. The lead AI is on it.', 'The contract was wrong. Waiting for the boss to revise it.'],
-  escalate: ['Needs attention', 'Needs a decision', 'amber', 'The AI team couldn’t finish this alone. The lead AI decides what to do next.', 'Waiting for the boss to decide how to continue.'],
-  help: ['Fixing a hiccup', 'Asked for help', 'amber', 'Something in the setup broke. It’s being looked at automatically.', 'Something in the environment broke. Triage is looking at it.'],
-  merged: ['Shipped', 'Merged', 'green', 'Done and added to the project.', null],
-  needs_human: ['Shipped', 'Done', 'green', 'Done and added to the project. A person will close the request.', 'Merged; the issue stays open for a person to close.'],
-  blocked: ['Stuck', 'Blocked', 'red', 'Can’t continue without a decision from a person.', null],
-  abandoned: ['Dropped', 'Abandoned', 'red', 'This task was cancelled.', null],
+  ready_to_merge: ['Ready to ship', 'Ready to merge', 'amber'],
+  needs_replan: ['Needs attention', 'Needs a new plan', 'amber'],
+  escalate: ['Needs attention', 'Needs a decision', 'amber'],
+  help: ['Fixing a hiccup', 'Asked for help', 'amber'],
+  merged: ['Shipped', 'Merged', 'green'],
+  needs_human: ['Shipped', 'Done', 'green'],
+  blocked: ['Stuck', 'Blocked', 'red'],
+  abandoned: ['Dropped', 'Abandoned', 'red'],
 };
 const FINISHED = new Set(['merged', 'needs_human', 'blocked', 'abandoned']);
 const DONE_FOR_DEPENDANTS = new Set(['merged', 'needs_human']);
 
 let snap = null;
-let seen = new Set();
-const expanded = new Set();
 let titles = {};
-const nameOf = (id) => titles[id] ?? id;
+const titleOf = (id) => titles[id] ?? id;
 
 function describe(t, states) {
-  const blockedBy = t.depends_on.filter((d) => !DONE_FOR_DEPENDANTS.has(states[d]));
   const st = STATE[t.state];
-  if (st) return { label: tech() ? st[1] : st[0], tone: st[2], note: tech() ? st[4] ?? st[3] : st[3], kind: FINISHED.has(t.state) ? 'finished' : 'attn' };
-  if (!t.phase) return blockedBy.length
-    ? { label: tech() ? 'Waiting' : 'Up next', tone: 'gray', kind: 'queued',
-        note: tech() ? `Starts after ${blockedBy.join(' and ')} ${blockedBy.length > 1 ? 'are' : 'is'} merged.` : `Starts once “${blockedBy.map(nameOf).join('” and “')}” ${blockedBy.length > 1 ? 'are' : 'is'} shipped.` }
-    : { label: tech() ? 'Queued' : 'Up next', tone: 'gray', note: tech() ? 'Starts when a slot frees up.' : 'Starts as soon as the team has room.', kind: 'queued' };
+  if (st) return { label: tech() ? st[1] : st[0], tone: st[2], kind: FINISHED.has(t.state) ? 'finished' : 'attn' };
+  if (!t.phase) {
+    const blockedBy = t.depends_on.filter((d) => !DONE_FOR_DEPENDANTS.has(states[d]));
+    return { label: tech() ? (blockedBy.length ? 'Waiting' : 'Queued') : 'Up next', tone: 'gray', kind: 'queued',
+      note: blockedBy.length
+        ? `Starts after ${blockedBy.map((d) => tech() ? d : `“${titleOf(d)}”`).join(' and ')} ${tech() ? (blockedBy.length > 1 ? 'are merged' : 'is merged') : (blockedBy.length > 1 ? 'ship' : 'ships')}.`
+        : tech() ? 'Starts when a slot frees up.' : 'Starts as soon as the team has room.' };
+  }
   return t.driver?.alive
     ? { label: tech() ? 'Working' : 'In progress', tone: 'blue', kind: 'working' }
-    : { label: 'Paused', tone: 'gray', kind: 'paused',
-        note: tech() ? 'The driver is not running. The orchestrator restarts it on its next check.' : 'Briefly paused. It restarts on its own.' };
+    : { label: 'Paused', tone: 'gray', kind: 'paused', note: tech() ? 'The driver is not running. The orchestrator restarts it on its next check.' : 'Briefly paused. It restarts on its own.' };
 }
 
 // Agents work inside `.worktrees/<task>/`; that prefix is noise when reading what they do.
-const shortPaths = (text) => text.replace(/\/\S*?\/\.worktrees\/[^/\s]+\/?/g, '');
-// "check AC1: <long command>" → "Check AC1"; "e2e ios flows/x.yaml" → "iOS end-to-end test x.yaml".
-function prettyStep(text) {
-  let m = text.match(/^check (\S+?):/);
-  if (m) return `Check ${m[1]}`;
-  m = text.match(/^e2e (\w+) (.+)$/);
-  if (m) return `${m[1] === 'ios' ? 'iOS' : m[1] === 'android' ? 'Android' : m[1]} end-to-end test ${m[2].split('/').pop()}`;
-  m = text.match(/^round (\d+): (\w+) \((\w+)\)$/);
-  if (m) return `Starting the ${m[2]} (${m[3]}) for round ${m[1]}`;
-  return text;
+const shortPaths = (text) => String(text ?? '').replace(/\/\S*?\/\.worktrees\/[^/\s]+\/?/g, '');
+
+// ---- Turning the run's events into a conversation. Each message: { key, ts, task, from, lead, text, items, tone, note }.
+function conversation(t) {
+  const out = [];
+  const say = (m, from, fields) => out.push({ key: `${t.id}|${m.ts}|${m.type}|${out.length}`, ts: m.ts, task: t.id, from, ...fields });
+  const legacy = !t.talk.some((m) => m.type === 'checks'); // runs from before the driver reported its checks
+  let waitingOnChecks = false;
+  for (const m of t.talk) {
+    if (!out.length) {
+      say(m, 'boss', {
+        lead: tech() ? `${t.id}${t.version > 1 ? ` (plan v${t.version})` : ''}: ${t.title ?? ''}` : `New task: “${t.title ?? t.id}”`,
+        text: [t.brief, `${at('coder')}, it’s yours. ${at('reviewer')} signs it off.`].filter(Boolean).join('\n\n'),
+      });
+    }
+    const reason = m.reason ? shortPaths(m.reason) : null;
+    switch (m.type) {
+      case 'driver_launched':
+        if (m.reason !== 'start') say(m, 'orchestrator', { note: true, text: m.reason === 'replanned' ? (tech() ? 'Driver restarted on the new plan' : 'Starting again with the new plan') : (tech() ? `Driver launched (${m.reason ?? 'start'})` : 'Picked the work back up') });
+        else say(m, 'orchestrator', { note: true, text: tech() ? 'Driver launched' : 'Work started' });
+        break;
+      case 'driver_restarted':
+        say(m, 'orchestrator', { note: true, text: tech() ? `Driver restarted${reason ? `: ${reason}` : ''}` : 'Restarted after a hiccup' });
+        break;
+      case 'round':
+        if (m.step === 'coder') {
+          if (legacy && waitingOnChecks) say(m, 'driver', { note: true, text: tech() ? 'Checks failed; sent back to the coder' : 'The automatic tests didn’t pass yet; back to the developer' });
+          waitingOnChecks = true;
+          const status = m.status && m.status !== 'implemented' ? m.status.replace(/_/g, ' ') : null;
+          say(m, 'coder', { lead: tech() ? `Round ${m.round}${status ? ` · ${status}` : ' · done'}` : `Attempt ${m.round}${status ? `: ${status}` : ' is ready'}`,
+            text: shortPaths(m.summary ?? reason ?? ''), tone: status ? 'warn' : null });
+        } else if (m.step === 'reviewer') {
+          waitingOnChecks = false;
+          say(m, 'reviewer', reviewMessage(m));
+        }
+        break;
+      case 'checks': {
+        waitingOnChecks = false;
+        const total = (m.passed?.length ?? 0) + (m.failed?.length ?? 0);
+        if (m.failed?.length) {
+          say(m, 'checks', { tone: 'bad',
+            lead: tech() ? `✗ ${m.failed.length} of ${total} failed` : `${m.failed.length} of ${plural(total, 'automatic test')} didn’t pass`,
+            text: tech() ? `${m.failed.map((f) => `${f.id} (exit ${f.code})`).join(', ')}. ${at('coder')}, back to you.` : `${at('coder')}, back to you.` });
+        } else {
+          say(m, 'checks', { tone: 'good', lead: tech() ? `✓ All ${total} checks passed` : `All ${plural(total, 'automatic test')} passed`, text: `${at('reviewer')}, your turn.` });
+        }
+        break;
+      }
+      case 'needs_replan':
+        say(m, m.by === 'boss' ? 'boss' : 'driver', { tone: 'warn', lead: `${at('boss')} ${tech() ? 'this needs a new plan' : 'we need a new plan for this one'}`, text: reason ?? '', items: tech() ? m.findings : null });
+        break;
+      case 'replanned':
+        say(m, 'boss', { lead: tech() ? 'Plan revised' : 'I adjusted the plan', text: `${reason ?? ''}\n\n${at('coder')}, please pick it up again.`.trim() });
+        break;
+      case 'ready_to_merge':
+        say(m, 'driver', { tone: 'good', lead: `${at('boss')} ${tech() ? 'ready to merge' : 'it’s ready to ship'}`,
+          text: tech()
+            ? [`Approved in ${plural(m.rounds ?? 1, 'round')}`, m.pr ? `PR #${m.pr}` : null, m.cost_usd != null ? money(m.cost_usd) : null, m.dry_run ? 'dry run' : null].filter(Boolean).join(' · ')
+            : `Passed every test and review${m.rounds > 1 ? ` after ${m.rounds} attempts` : ' on the first try'}.` });
+        break;
+      case 'merged':
+        say(m, 'boss', { tone: 'good', lead: tech() ? 'Merged' : 'Shipped. Thanks, team!' });
+        break;
+      case 'needs_human':
+        say(m, 'boss', { tone: 'good', lead: tech() ? 'Merged' : 'Shipped', text: tech() ? 'The issue stays open for a person to close.' : 'A person will close the request.' });
+        break;
+      case 'rebase_needed':
+        say(m, 'boss', { lead: tech() ? 'The base moved: sync and re-check' : 'Newer work landed. Please catch up and re-test.', text: reason ?? '' });
+        break;
+      case 'help':
+        say(m, m.by === 'orchestrator' ? 'orchestrator' : 'driver', { tone: 'warn', lead: tech() ? 'Something broke in the environment' : 'Something in the setup broke', text: reason ?? '' });
+        break;
+      case 'triage':
+        say(m, 'triage', { lead: tech() ? 'Triage' : 'I looked into it', text: reason ?? '' });
+        break;
+      case 'retry':
+        say(m, 'boss', { lead: tech() ? 'Retry' : 'Try again', text: reason ?? '' });
+        break;
+      case 'escalate':
+        say(m, m.by === 'boss' ? 'boss' : 'driver', { tone: 'warn', lead: `${at('boss')} ${tech() ? 'I need a decision' : 'I need you to decide how to continue'}`, text: reason ?? '' });
+        break;
+      case 'blocked':
+        say(m, m.by === 'driver' ? 'driver' : 'boss', { tone: 'bad', lead: tech() ? 'Blocked' : 'Stuck: this needs a person', text: reason ?? '' });
+        break;
+      case 'abandoned':
+        say(m, 'boss', { tone: 'bad', lead: tech() ? 'Abandoned' : 'Dropping this task', text: reason ?? '' });
+        break;
+      default:
+        say(m, m.by in WHO ? m.by : 'driver', { note: true, text: m.type.replace(/_/g, ' ') + (reason ? `: ${reason}` : '') });
+    }
+  }
+  return out;
 }
-// What the driver is doing, said without jargon.
-function simpleStep(text) {
-  if (/^e2e /.test(text)) return 'Trying it out on a simulated phone';
-  if (/^check /.test(text)) return 'Running automatic tests';
-  if (/^round \d+: coder/.test(text)) return 'Handing the work to the AI developer';
-  if (/^round \d+: reviewer/.test(text)) return 'Handing the work to the AI reviewer';
-  return null;
+
+function reviewMessage(m) {
+  const r = m.review;
+  if (m.verdict === 'approve') {
+    const notes = r?.notes ? (tech() ? ` ${plural(r.notes, 'non-blocking note')} in the report.` : ` I left ${plural(r.notes, 'small suggestion')} for later.`) : '';
+    return { tone: 'good', lead: tech() ? `Round ${m.round} · approved` : 'Approved. Looks good to me.', text: notes.trim() };
+  }
+  if (m.verdict === 'needs_replan') return { tone: 'warn', lead: `${at('boss')} ${tech() ? 'the contract needs a new plan' : 'the plan itself needs changing'}`, text: shortPaths(m.reason ?? '') };
+  const items = [];
+  for (const f of r?.blocking ?? []) items.push(tech() ? `[${f.severity}] ${f.file ? `${shortPaths(f.file)}${f.line ? `:${f.line}` : ''} — ` : ''}${f.problem}` : f.problem);
+  for (const a of r?.failed_acs ?? []) items.push(tech() ? `acceptance ${a}` : a.replace(/^[^:]+:\s*/, ''));
+  const still = r?.still_open?.length ? (tech() ? `Still open from last round: ${r.still_open.join(', ')}.` : `${plural(r.still_open.length, 'earlier point')} not fixed yet.`) : '';
+  return { tone: 'warn', lead: tech() ? `Round ${m.round} · changes requested${m.open ? ` (${m.open} open)` : ''}` : 'A few changes, please:',
+    text: [still, `${at('coder')}, back to you.`].filter(Boolean).join(' '), items: items.length ? items : null };
 }
-// A finding is written for the coder. For people: say which kind of check failed, not its text.
-function simpleProblem(f) {
-  if (f.source === 'e2e') return 'The test on a simulated phone didn’t pass yet.';
-  if (f.source === 'check') return 'One of the automatic tests didn’t pass yet.';
-  if (f.source === 'review') return 'The AI reviewer asked for changes.';
-  if (f.source === 'scope') return 'The change touched files it wasn’t supposed to.';
-  if (f.source === 'conflict') return 'The change clashed with newer work and needs reconciling.';
-  return 'Something didn’t pass yet.';
+
+// The run-wide channel: every task's messages in time order, plus batches starting and finishing.
+function everyone(s, tasks) {
+  const msgs = tasks.flatMap((t) => conversation(t));
+  for (const m of s.talk) {
+    msgs.push({ key: `run|${m.ts}|${m.type}|${m.batch}`, ts: m.ts, from: 'orchestrator', note: true,
+      text: m.type === 'batch_done' ? (tech() ? `Batch “${m.batch}” finished` : `Workstream “${m.batch}” finished`) : (tech() ? `Orchestrator for “${m.batch}” started` : `Workstream “${m.batch}” started`) });
+  }
+  return msgs.sort((a, b) => a.ts.localeCompare(b.ts));
 }
+
+// What someone is doing right now, as a "typing" line: [speaker, text] or null.
+function typing(t) {
+  if (!t.driver?.alive) return null;
+  const role = t.child && t.activity && !t.activity.done ? t.activity.role : null;
+  if (role) {
+    const detail = tech() && t.activity.last ? ` · ${t.activity.steps} tool calls · ${shortPaths(t.activity.last.text)}` : ` · ${plural(t.activity.steps, 'step')} so far`;
+    return [role, `${nameOf(role)} is ${role === 'coder' ? (tech() ? 'coding' : 'building') : 'reviewing'}${detail}`];
+  }
+  const step = t.step?.text ?? '';
+  let m = step.match(/^check (\S+?):/);
+  if (m) return ['checks', tech() ? `Checks running ${m[1]} · ${ago(t.step.at)}` : 'Running the automatic tests'];
+  m = step.match(/^e2e (\w+) (.+)$/);
+  if (m) return ['checks', tech() ? `End-to-end on ${m[1]}: ${m[2].split('/').pop()}` : 'Trying it out on a simulated phone'];
+  return ['driver', `${nameOf('driver')}: ${(DOING[t.phase] ?? [t.phase, t.phase])[tech() ? 1 : 0]}`];
+}
+
+// ---- Selection, unread counts and expanded messages are per-viewer and in memory (selection is remembered).
+let current = store('crew-chat') || 'all';
+const readUpTo = {}; // conversation → messages already seen
+const expanded = new Set();
+let seenKeys = null;
+let lastShown = null;
+
+function select(id) {
+  current = id;
+  store('crew-chat', id);
+  document.getElementById('app').classList.add('reading');
+  render(snap);
+}
+document.getElementById('app').classList.toggle('reading', !matchMedia('(max-width: 760px)').matches);
 
 function render(s) {
   snap = s;
@@ -239,229 +385,222 @@ function render(s) {
   const tasks = s.batches.flatMap((b) => b.tasks);
   titles = Object.fromEntries(tasks.map((t) => [t.id, t.title ?? t.id]));
   const states = Object.fromEntries(tasks.map((t) => [t.id, t.state]));
-  const kinds = tasks.map((t) => describe(t, states).kind);
-  const count = (k) => kinds.filter((x) => x === k).length;
+  const desc = Object.fromEntries(tasks.map((t) => [t.id, describe(t, states)]));
+  if (current !== 'all' && !titles[current]) current = 'all';
 
   document.title = s.waiting.length ? `(${s.waiting.length}) Crew · ${s.run}` : `Crew · ${s.run}`;
-  document.getElementById('run').textContent = tech() ? `Crew · ${s.run}` : 'AI team progress';
-  document.getElementById('cost').textContent = tech() ? `${money(s.cost)} spent so far` : `${money(s.cost)} in AI costs so far`;
+  document.getElementById('run').textContent = tech() ? `Crew · ${s.run}` : 'AI team chat';
+  document.getElementById('cost').textContent = tech() ? `${money(s.cost)} spent` : `${money(s.cost)} in AI costs so far`;
 
-  const intro = document.getElementById('intro');
-  intro.hidden = tech();
-  if (!tech()) {
-    intro.replaceChildren();
-    intro.append(el('b', null, 'How this works: '),
-      document.createTextNode('a lead AI splits the work into tasks. For each task, an AI developer builds it, automatic tests check it, and a separate AI reviewer must approve it before it ships. Tasks that depend on each other go in order.'));
+  const convs = { all: everyone(s, tasks) };
+  for (const t of tasks) convs[t.id] = conversation(t);
+  if (!seenKeys) for (const [id, list] of Object.entries(convs)) readUpTo[id] = list.length; // first load: nothing is unread
+  readUpTo[current] = convs[current].length;
+
+  renderList(s, tasks, desc, convs);
+  renderHead(s, tasks, desc);
+  renderMessages(convs[current], current === 'all', current === 'all' ? 'Nobody has said anything yet.' : desc[current].note ?? 'This task hasn’t started yet.');
+  renderTyping(current === 'all' ? tasks : tasks.filter((t) => t.id === current), current === 'all');
+  document.getElementById('composer').textContent = tech()
+    ? 'Read-only. Talk to the crew through the boss in your Claude Code session.'
+    : 'You’re watching. To step in, ask the lead AI in Claude Code.';
+}
+
+function convRow(id, { avatar, name, when, preview, typingNow, unread, pill }) {
+  const b = el('button', 'conv');
+  b.type = 'button';
+  b.setAttribute('aria-current', String(id === current));
+  b.onclick = () => select(id);
+  const top = el('div', 'side');
+  top.append(el('span', 'when', when ?? ''));
+  b.append(avatar, el('div', 'name', name), top, el('div', `prev${typingNow ? ' typing' : ''}`, preview ?? ''));
+  const side = el('div', 'side');
+  if (pill) side.append(pill);
+  if (unread > 0) side.append(el('span', 'badge', String(unread)));
+  b.append(side);
+  return b;
+}
+
+function previewOf(msg) {
+  if (!msg) return '';
+  return `${nameOf(msg.from)}: ${msg.lead ?? msg.text ?? ''}`.split('\n')[0];
+}
+
+function renderList(s, tasks, desc, convs) {
+  const list = document.getElementById('list');
+  list.replaceChildren();
+  if (s.waiting.length) {
+    list.append(el('div', 'waiting', `${tech() ? 'Waiting on the boss' : 'Needs a decision'}: ${s.waiting.map((w) => tech() ? w.id : `“${titleOf(w.id)}”`).join(', ')}`));
   }
-
-  const boss = document.getElementById('boss');
-  boss.classList.toggle('attn', s.waiting.length > 0);
-  const who = el('div');
-  who.append(el('div', 'who', tech() ? 'Boss (your Claude Code session)' : 'Lead AI (plans the work and approves what ships)'),
-    el('div', 'muted', s.waiting.length
-      ? `${tech() ? 'Needs to act on' : 'Has to decide on'}: ${s.waiting.map((w) => tech() ? `${w.id} (${STATE[w.state][1].toLowerCase()})` : `“${nameOf(w.id)}”`).join(', ')}`
-      : tech() ? 'Nothing is waiting on the boss right now.' : 'Nothing needs a decision right now.'));
-  const counts = el('div', 'counts');
-  const rows = tech()
-    ? [[count('working'), 'working'], [count('attn'), 'need the boss'], [count('queued') + count('paused'), 'waiting'], [count('finished'), 'finished']]
-    : [[count('working'), 'in progress'], [count('attn'), 'need a decision'], [count('queued') + count('paused'), 'up next'], [count('finished'), 'done']];
-  for (const [n, label] of rows) {
-    const c = el('span');
-    c.append(el('b', null, String(n)), document.createTextNode(label));
-    counts.append(c);
-  }
-  boss.replaceChildren(who, counts);
-
-  const root = document.getElementById('batches');
-  root.replaceChildren();
+  const allMsgs = convs.all;
+  const working = tasks.filter((t) => desc[t.id].kind === 'working').length;
+  list.append(convRow('all', {
+    avatar: el('div', 'av c-blue', '#'), name: tech() ? 'everyone' : 'Everyone',
+    when: allMsgs.length ? clock(allMsgs.at(-1).ts) : '',
+    preview: working ? `${plural(working, 'task')} in progress` : previewOf(allMsgs.at(-1)), typingNow: working > 0,
+    unread: allMsgs.length - (readUpTo.all ?? 0),
+  }));
   for (const b of s.batches) {
-    const col = el('div');
+    const head = el('div', 'group');
     const allDone = b.tasks.every((t) => FINISHED.has(t.state));
-    const head = el('div', 'orch');
-    const name = el('div');
-    name.append(el('span', 'name', tech() ? `Batch “${b.name}”` : `Workstream: ${b.name}`),
-      el('span', 'muted', tech() ? ` · ${b.max_parallel} at a time${b.dry_run ? ' · dry run' : ''}` : ` · ${plural(b.tasks.length, 'task')}${b.dry_run ? ' · practice run' : ''}`));
-    const pill = b.orchestrator?.alive ? ['blue', tech() ? 'orchestrator running' : 'active'] : allDone ? ['green', 'finished'] : ['gray', tech() ? 'orchestrator stopped' : 'paused'];
-    head.append(name, el('span', `pill tone-${pill[0]}`, pill[1]));
-    const stack = el('div', 'stack');
-    // Active work first, then what needs a decision, then the queue, then what's finished.
-    const order = { working: 0, attn: 1, paused: 2, queued: 3, finished: 4 };
-    const sorted = [...b.tasks].sort((x, y) => order[describe(x, states).kind] - order[describe(y, states).kind]);
-    for (const t of sorted) stack.append(taskCard(t, s, describe(t, states)));
-    col.append(head, stack);
-    root.append(col);
+    const state = b.orchestrator?.alive ? ['blue', tech() ? 'running' : 'active'] : allDone ? ['green', 'finished'] : ['gray', tech() ? 'stopped' : 'paused'];
+    head.append(el('span', null, `${tech() ? 'Batch' : 'Workstream'} · ${b.name}${b.dry_run ? (tech() ? ' · dry run' : ' · practice') : ''}`), el('span', `pill c-${state[0]}`, state[1]));
+    list.append(head);
+    // Most recent conversation first, queued tasks (no messages yet) last.
+    const lastTs = (t) => convs[t.id].at(-1)?.ts ?? '';
+    for (const t of [...b.tasks].sort((x, y) => lastTs(y).localeCompare(lastTs(x)))) {
+      const d = desc[t.id];
+      const msgs = convs[t.id];
+      const live = d.kind === 'working' ? typing(t) : null;
+      list.append(convRow(t.id, {
+        avatar: el('div', `av c-gray ring-${d.tone}`, initials(t.title ?? t.id)),
+        name: t.title ?? t.id, when: msgs.length ? clock(msgs.at(-1).ts) : '',
+        preview: live ? `${nameOf(live[0])} is typing…` : msgs.length ? previewOf(msgs.at(-1)) : d.note ?? d.label,
+        typingNow: !!live, unread: msgs.length - (readUpTo[t.id] ?? 0),
+        pill: d.kind === 'working' ? null : el('span', `pill c-${d.tone}`, d.label),
+      }));
+    }
   }
-
-  renderFeed(s.events);
 }
 
-function taskCard(t, s, d) {
-  const compact = d.kind === 'finished' || d.kind === 'queued';
-  const card = el('div', `card task${compact ? ' compact' : ''}${d.kind === 'working' ? ' working' : ''}${d.kind === 'attn' ? ' attn' : ''}`);
-  const head = el('div', 'task-head');
-  const name = el('div');
-  name.append(el('div', 'task-title', t.title ?? t.id));
-  if (tech()) name.append(el('div', 'task-id mono', [t.id, t.issue != null ? `issue #${t.issue}` : null, t.version > 1 ? `plan v${t.version}` : null].filter(Boolean).join(' · ')));
-  else if (t.issue != null) name.append(el('div', 'task-id', `Request #${t.issue}`));
-  head.append(name, el('span', `pill tone-${d.tone}`, d.label));
-  card.append(head);
+const initials = (title) => title.split(/[\s:·-]+/).filter((w) => /^[\p{L}\p{N}]/u.test(w)).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
 
-  if (compact) {
-    const bits = [];
-    if (d.note) bits.push(d.note);
-    if (d.kind === 'finished' && t.attempts) {
-      if (tech()) {
-        if (t.pr) bits.push(`PR #${t.pr}`);
-        bits.push(plural(t.attempts, 'coder round') + (t.replans ? `, ${plural(t.replans, 'replan')}` : ''));
-      } else {
-        bits.push(t.attempts === 1 ? 'Got it right on the first try' : `Took ${t.attempts} attempts${t.replans ? ' and a plan change' : ''}`);
-      }
-    }
-    if (d.kind === 'finished') bits.push(money(t.cost));
-    card.append(el('div', 'line', bits.join(' · ')));
-    return card;
+function renderHead(s, tasks, desc) {
+  const head = document.getElementById('head');
+  head.replaceChildren();
+  const back = el('button', 'back', '‹');
+  back.type = 'button';
+  back.setAttribute('aria-label', 'Back to conversations');
+  back.onclick = () => document.getElementById('app').classList.remove('reading');
+  head.append(back);
+  const info = el('div', 'info');
+  if (current === 'all') {
+    const count = (k) => tasks.filter((t) => desc[t.id].kind === k).length;
+    head.append(el('div', 'av sm c-blue', '#'));
+    info.append(el('div', 'title', tech() ? 'everyone' : 'Everyone'));
+    const parts = tech()
+      ? [[count('working'), 'working'], [count('attn'), 'need the boss'], [count('queued') + count('paused'), 'waiting'], [count('finished'), 'finished']]
+      : [[count('working'), 'in progress'], [count('attn'), 'need a decision'], [count('queued') + count('paused'), 'up next'], [count('finished'), 'done']];
+    info.append(el('div', 'sub', parts.map(([n, l]) => `${n} ${l}`).join(' · ')));
+    head.append(info);
+    return;
   }
-
-  // What is happening right now, in one sentence.
-  const role = t.child && t.activity && !t.activity.done ? t.activity.role : null;
-  const now = el('div', `now${d.kind === 'working' ? '' : ' idle'}`);
-  if (d.kind === 'working') {
-    now.append(el('div', 'what', (DOING[t.phase] ?? [t.phase, t.phase])[tech() ? 1 : 0]));
-    let detail = null;
-    if (tech()) {
-      detail = role && t.activity.last ? `${t.activity.steps} tool calls so far · latest: ${shortPaths(t.activity.last.text)}`
-        : t.step ? `${prettyStep(t.step.text)} · started ${ago(t.step.at)}` : null;
-    } else {
-      detail = role ? `${plural(t.activity.steps, 'step')} so far` : t.step ? simpleStep(t.step.text) : null;
-    }
-    if (detail) now.append(el('div', 'detail clamp', detail));
-  } else {
-    now.append(el('div', 'what', d.note ?? ''));
-  }
-  card.append(now);
-
-  const steps = el('div', 'steps');
-  const at = t.phase === 'ready_to_merge' ? s.phases.length : s.phases.indexOf(t.phase);
-  const stepList = tech()
-    ? s.phases.map((p, i) => [STEP_TECH[p] ?? p, i, i])
-    : STEPS_SIMPLE.map(([label, phases]) => {
-      const idx = phases.map((p) => s.phases.indexOf(p)).filter((i) => i >= 0);
-      return [label, Math.min(...idx), Math.max(...idx)];
-    });
-  for (const [label, first, last] of stepList) {
-    const cls = at > last ? 'done' : at >= first ? `current${d.kind === 'working' ? '' : ' paused'}` : '';
-    steps.append(el('span', cls, label));
-  }
-  card.append(steps);
-
+  const t = tasks.find((x) => x.id === current);
+  const d = desc[t.id];
+  head.append(el('div', `av sm c-gray ring-${d.tone}`, initials(t.title ?? t.id)));
+  const title = el('div', 'title', t.title ?? t.id);
+  info.append(title);
   const round = t.round ?? 1;
-  const lastRound = round >= t.max_rounds;
-  if (!tech()) {
-    const facts = el('div', 'facts');
-    facts.append(el('span', lastRound ? 'bad' : null, lastRound
-      ? `Attempt ${round} of ${t.max_rounds}: last try before the lead AI steps in`
-      : `Attempt ${round} of ${t.max_rounds}`));
-    facts.append(el('span', 'muted', `${money(t.cost)} so far`));
-    card.append(facts);
-    if (t.findings.length) {
-      const p = el('div', 'problem');
-      p.append(el('b', null, 'Last attempt: '), document.createTextNode(`${simpleProblem(t.findings[0])} The AI developer is working on it.`));
-      card.append(p);
+  const sub = tech()
+    ? [t.id, t.issue != null ? `issue #${t.issue}` : null, t.version > 1 ? `plan v${t.version}` : null, `coder ${t.models?.coder ?? '?'} → reviewer ${t.models?.reviewer ?? '?'}`,
+      t.phase ? `round ${round}/${t.max_rounds}` : null, money(t.cost), t.pr ? `PR #${t.pr}` : null, t.head ? `commit ${t.head}` : null, t.restarts ? `restarted ${t.restarts}×` : null]
+    : [t.issue != null ? `Request #${t.issue}` : null, t.phase && !FINISHED.has(t.state) ? `attempt ${round} of ${t.max_rounds}` : null, money(t.cost), d.note ?? null];
+  info.append(el('div', 'sub', sub.filter(Boolean).join(' · ')));
+  if (t.phase && !FINISHED.has(t.state)) {
+    const steps = el('div', 'steps');
+    const pos = t.phase === 'ready_to_merge' ? s.phases.length : s.phases.indexOf(t.phase);
+    const stepList = tech()
+      ? s.phases.map((p, i) => [STEP_TECH[p] ?? p, i, i])
+      : STEPS_SIMPLE.map(([label, phases]) => {
+        const idx = phases.map((p) => s.phases.indexOf(p)).filter((i) => i >= 0);
+        return [label, Math.min(...idx), Math.max(...idx)];
+      });
+    for (const [label, first, last] of stepList) steps.append(el('span', pos > last ? 'done' : pos >= first ? `current${d.kind === 'working' ? '' : ' paused'}` : '', label));
+    info.append(steps);
+  }
+  head.append(info, el('span', `pill c-${d.tone}`, d.label));
+}
+
+// Light formatting for agent text: **bold** and `code`, built as nodes (never HTML).
+function rich(parent, text) {
+  for (const part of String(text).split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/)) {
+    if (!part) continue;
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) parent.append(el('b', null, part.slice(2, -2)));
+    else if (part.startsWith('`') && part.endsWith('`') && part.length > 2) parent.append(el('code', null, part.slice(1, -1)));
+    else parent.append(document.createTextNode(part));
+  }
+}
+
+function renderMessages(msgs, inEveryone, emptyText) {
+  const box = document.getElementById('msgs');
+  const switched = lastShown !== `${current}|${mode}`;
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  const keep = box.scrollTop;
+  box.replaceChildren();
+  if (!tech() && inEveryone) {
+    const intro = el('div', 'note intro');
+    intro.append(el('span', null, 'How this works: the lead AI splits the work into tasks. In each task, an AI developer builds it, automatic tests check it, and a separate AI reviewer must approve it before it ships. Pick a task on the left to read its conversation.'));
+    box.append(intro);
+  }
+  if (!msgs.length) box.append(el('div', 'empty', emptyText));
+  let prev = null;
+  for (const m of msgs) {
+    const fresh = seenKeys && !seenKeys.has(m.key) ? ' fresh' : '';
+    if (m.note) {
+      const n = el('div', `note${fresh}`);
+      n.append(el('span', null, `${inEveryone && m.task ? `${titleOf(m.task)} · ` : ''}${m.text} · ${clock(m.ts)}`));
+      box.append(n);
+      prev = null;
+      continue;
     }
-    const open = openDetails.has(t.id);
-    const btn = el('button', 'more', open ? 'Hide technical details ▴' : 'Show technical details ▾');
-    btn.type = 'button';
-    btn.setAttribute('aria-expanded', String(open));
-    btn.onclick = () => { open ? openDetails.delete(t.id) : openDetails.add(t.id); render(snap); };
-    card.append(btn);
-    if (open) card.append(techBlock(t, role, lastRound));
-    return card;
+    const w = who(m.from);
+    const cont = prev && prev.from === m.from && prev.task === m.task && Date.parse(m.ts) - Date.parse(prev.ts) < 5 * 60_000;
+    const row = el('div', `msg${w.mine ? ' mine' : ''}${cont ? ' cont' : ''}${fresh}`);
+    row.append(el('div', `av sm c-${w.color}`, w.letter));
+    const col = el('div', 'col');
+    if (!cont) {
+      const label = el('div', 'who');
+      label.append(el('b', null, nameOf(m.from)));
+      const model = tech() && (m.from === 'coder' || m.from === 'reviewer') ? snap.batches.flatMap((b) => b.tasks).find((t) => t.id === m.task)?.models?.[m.from] : null;
+      if (model) label.append(document.createTextNode(` · ${model}`));
+      if (inEveryone && m.task) { label.append(document.createTextNode(' in ')); label.append(el('span', 'on-task', titleOf(m.task))); }
+      col.append(label);
+    }
+    const bubble = el('div', `bubble${m.tone && !w.mine ? ` ${m.tone}` : ''}`);
+    if (m.lead) bubble.append(el('div', 'lead', m.lead));
+    const long = (m.text?.length ?? 0) > 420 || (m.items?.length ?? 0) > 4;
+    const open = expanded.has(m.key);
+    if (m.text) {
+      const body = el('div', long && !open ? 'clamp' : null);
+      rich(body, m.text);
+      bubble.append(body);
+    }
+    if (m.items?.length) {
+      const ul = el('ul');
+      for (const item of open || !long ? m.items : m.items.slice(0, 3)) { const li = el('li'); rich(li, shortPaths(item)); ul.append(li); }
+      bubble.append(ul);
+    }
+    col.append(bubble);
+    if (long) {
+      const more = el('button', 'more', open ? 'Show less' : 'Show more');
+      more.type = 'button';
+      more.setAttribute('aria-expanded', String(open));
+      more.onclick = () => { open ? expanded.delete(m.key) : expanded.add(m.key); render(snap); };
+      col.append(more);
+    }
+    col.append(el('div', 'stamp', clock(m.ts)));
+    row.append(col);
+    box.append(row);
+    prev = m;
   }
-  card.append(techBlock(t, role, lastRound, true));
-  return card;
+  seenKeys = new Set([...(seenKeys ?? []), ...msgs.map((m) => m.key)]);
+  if (switched || atBottom) box.scrollTop = box.scrollHeight;
+  else box.scrollTop = keep;
+  lastShown = `${current}|${mode}`;
 }
 
-// Ids, models, checks, raw findings and process facts: the same block in technical mode and behind the button.
-function techBlock(t, role, lastRound, inline = false) {
-  const box = el('div', inline ? null : 'tech');
-  if (!inline) {
-    box.append(el('div', 'task-id mono', [t.id, t.issue != null ? `issue #${t.issue}` : null, t.version > 1 ? `plan v${t.version}` : null].filter(Boolean).join(' · ')));
-    if (role && t.activity.last) box.append(el('div', 'act', `${role} ▸ ${shortPaths(t.activity.last.text)}`));
-    else if (t.driver?.alive && t.step) box.append(el('div', 'act', `driver ▸ ${prettyStep(t.step.text)} · ${ago(t.step.at)}`));
+function renderTyping(tasks, inEveryone) {
+  const box = document.getElementById('typing');
+  box.replaceChildren();
+  for (const t of tasks) {
+    const live = typing(t);
+    if (!live) continue;
+    const line = el('div', 't');
+    const dots = el('span', 'dots');
+    dots.append(el('i'), el('i'), el('i'));
+    line.append(dots, el('span', 'txt', `${inEveryone ? `${titleOf(t.id)}: ` : ''}${live[1]}`));
+    box.append(line);
   }
-  const facts = el('div', 'facts');
-  facts.append(el('span', lastRound ? 'bad' : null, `Round ${t.round ?? 1} of ${t.max_rounds}${lastRound ? ' (last)' : ''}`));
-  const agents = el('span');
-  agents.append(el('span', role === 'coder' ? 'on' : null, `Coder ${t.models?.coder ?? '?'}`), document.createTextNode(' → '),
-    el('span', role === 'reviewer' ? 'on' : null, `Reviewer ${t.models?.reviewer ?? '?'}`));
-  facts.append(agents);
-  if (t.checks.length) {
-    const failed = t.checks.filter((c) => !c.ok);
-    facts.append(el('span', failed.length ? 'bad' : 'ok', failed.length ? `✗ ${failed.map((c) => c.id).join(', ')} failed` : `✓ ${t.checks.length} checks passed`));
-  }
-  box.append(facts);
-  if (t.findings.length) {
-    const p = el('div', 'problem');
-    p.append(el('b', null, t.findings.length > 1 ? `${t.findings.length} problems from the last round` : 'Problem from the last round'));
-    p.append(el('div', 'clamp', t.findings[0].problem));
-    box.append(p);
-  }
-  const foot = [money(t.cost)];
-  if (t.head) foot.push(`commit ${t.head}`);
-  if (t.pr) foot.push(`PR #${t.pr}`);
-  if (t.restarts) foot.push(`restarted ${t.restarts}×`);
-  if (t.driver?.alive) foot.push(`driver pid ${t.driver.pid} · heartbeat ${ago(t.heartbeat)}`);
-  box.append(el('div', 'foot', foot.join(' · ')));
-  return box;
-}
-
-// One plain sentence per event. Technical mode adds the task id and the agents' own summaries.
-function headline(e) {
-  const T = tech();
-  switch (e.type) {
-    case 'round':
-      if (e.step === 'reviewer') return e.verdict === 'approve'
-        ? (T ? `Reviewer approved (round ${e.round})` : 'AI reviewer approved the work')
-        : (T ? `Reviewer asked for changes (round ${e.round}${e.open ? `, ${e.open} open` : ''})` : 'AI reviewer asked for changes');
-      if (!T) return e.status === 'implemented' ? `AI developer finished attempt ${e.round}` : `AI developer paused on attempt ${e.round}`;
-      return `Coder finished round ${e.round}${e.status && e.status !== 'implemented' ? `: ${e.status.replace(/_/g, ' ')}` : ''}`;
-    case 'ready_to_merge': return T ? `Ready to merge${e.pr ? ` (PR #${e.pr})` : ''}` : 'Ready to ship';
-    case 'merged': return T ? 'Merged' : 'Shipped';
-    case 'needs_human': return T ? 'Done; issue left open' : 'Shipped';
-    case 'needs_replan': return T ? 'Asked for a new plan' : 'Asked the lead AI to adjust the plan';
-    case 'replanned': return T ? 'Plan revised' : 'Plan adjusted; work continues';
-    case 'rebase_needed': return T ? 'Base moved; syncing and re-checking' : 'Catching up with newer work';
-    case 'driver_launched': return T ? 'Driver started' : 'Work started';
-    case 'driver_restarted': return T ? 'Driver restarted' : 'Restarted after a hiccup';
-    case 'orchestrator_started': return T ? `Orchestrator for “${e.task}” started` : `Workstream “${e.task}” started`;
-    case 'batch_done': return T ? `Batch “${e.task}” finished` : `Workstream “${e.task}” finished`;
-    case 'triage': return T ? 'Triage ran' : 'Automatic troubleshooting ran';
-    case 'blocked': return T ? 'Blocked' : 'Stuck; needs a person';
-    case 'escalate': return T ? 'Escalated to the boss' : 'Handed to the lead AI to decide';
-    default: return e.type.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
-  }
-}
-const TASKLESS = new Set(['orchestrator_started', 'batch_done']);
-const BODY_TYPES = new Set(['round', 'needs_replan', 'replanned', 'escalate', 'blocked', 'help', 'triage', 'abandoned', 'retry']);
-
-function renderFeed(events) {
-  const feed = document.getElementById('events');
-  feed.replaceChildren();
-  const next = new Set();
-  for (const e of events) {
-    const key = `${e.ts}|${e.type}|${e.task}`;
-    next.add(key);
-    const body = tech() && BODY_TYPES.has(e.type) && e.text && !(e.type === 'round' && e.step === 'reviewer') ? e.text : null;
-    const row = el('div', `ev${seen.size && !seen.has(key) ? ' fresh' : ''}${body ? ' has-more' : ''}`);
-    const main = el('div');
-    main.append(el('div', 'head', headline(e)));
-    if (!TASKLESS.has(e.type)) main.append(el('div', tech() ? 'who mono' : 'who', tech() ? e.task : nameOf(e.task)));
-    if (body) main.append(el('div', `body${expanded.has(key) ? '' : ' clamp'}`, body));
-    row.append(el('div', 't', clock(e.ts)), main);
-    if (body) row.onclick = () => { expanded.has(key) ? expanded.delete(key) : expanded.add(key); renderFeed(events); };
-    feed.append(row);
-  }
-  seen = next;
 }
 
 const dot = document.getElementById('dot');
