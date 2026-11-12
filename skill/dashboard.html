@@ -57,6 +57,13 @@
   .conv .prev { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conv .prev.typing { color: var(--blue); font-style: italic; }
   .conv .side { display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+  /* A run is a thread: the open one shows its batches and tasks indented beneath it. */
+  .conv.run[aria-expanded="true"] { background: var(--sunk); }
+  .conv.run[aria-expanded="true"][aria-current="true"] { background: var(--blue-bg); }
+  .thread { margin: 0 0 8px 24px; border-left: 2px solid var(--line); }
+  .thread .group { padding-left: 12px; }
+  .thread .conv { padding-left: 12px; }
+  .chev { display: inline-block; width: 12px; color: var(--muted); font-size: 11px; }
   .badge { min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--blue); color: #fff; font-size: 12px; font-weight: 700; text-align: center; }
 
   /* Avatars: a task's ring shows its state; a speaker's colour stays the same everywhere. */
@@ -140,7 +147,7 @@
   </div>
 </header>
 <div id="app" class="app">
-  <nav id="list" class="list" aria-label="Conversations"></nav>
+  <nav id="list" class="list" aria-label="Runs and conversations"></nav>
   <section class="chat" aria-label="Conversation">
     <div id="head" class="chat-head"></div>
     <div id="msgs" class="msgs"></div>
@@ -165,7 +172,7 @@ const store = (key, value) => { try { if (value === undefined) return localStora
 let mode = store('crew-mode') === 'tech' ? 'tech' : 'simple';
 const tech = () => mode === 'tech';
 for (const b of document.querySelectorAll('.modes button')) {
-  b.onclick = () => { mode = b.dataset.mode; store('crew-mode', mode); if (snap) render(snap); };
+  b.onclick = () => { mode = b.dataset.mode; store('crew-mode', mode); render(); };
 }
 
 // ---- Who talks. The boss is "you" (your Claude Code session), so its messages sit on the right.
@@ -209,7 +216,9 @@ const STATE = {
 const FINISHED = new Set(['merged', 'needs_human', 'blocked', 'abandoned']);
 const DONE_FOR_DEPENDANTS = new Set(['merged', 'needs_human']);
 
-let snap = null;
+let snap = null;  // the open run's snapshot (null while loading or when there are no runs)
+let runs = [];     // every run, newest first: { id, updated, batches, tasks, finished, waiting, active }
+let runId = store('crew-run') || '';
 let titles = {};
 const titleOf = (id) => titles[id] ?? id;
 
@@ -365,32 +374,64 @@ function typing(t) {
 }
 
 // ---- Selection, unread counts and expanded messages are per-viewer and in memory (selection is remembered).
+// Unread counts and "fresh" highlights are for the open run only; opening another run starts them over.
 let current = store('crew-chat') || 'all';
-const readUpTo = {}; // conversation → messages already seen
-const expanded = new Set();
+let readUpTo = {}; // conversation → messages already seen
+let expanded = new Set();
 let seenKeys = null;
 let lastShown = null;
+let shownRun = null;
+
+function resetRunView() {
+  readUpTo = {};
+  expanded = new Set();
+  seenKeys = null;
+  lastShown = null;
+}
 
 function select(id) {
   current = id;
   store('crew-chat', id);
   document.getElementById('app').classList.add('reading');
-  render(snap);
+  render();
+}
+
+function openRun(id) {
+  if (id === runId) return select('all');
+  runId = id;
+  store('crew-run', id);
+  current = 'all';
+  store('crew-chat', 'all');
+  snap = null;
+  connect();
+  document.getElementById('app').classList.add('reading');
+  render();
 }
 document.getElementById('app').classList.toggle('reading', !matchMedia('(max-width: 760px)').matches);
 
-function render(s) {
-  snap = s;
+// Run ids look like "20260101-truncate-titles"; in simple mode show "Truncate titles" and the date beside it.
+function runName(id) {
+  if (tech()) return id;
+  const m = id.match(/^\d{8}(?:-\d{4,6})?-(.+)$/);
+  const words = (m ? m[1] : id).replace(/[-_]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function render() {
+  const s = snap;
   for (const b of document.querySelectorAll('.modes button')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+  const waitingAll = runs.reduce((n, r) => n + r.waiting, 0);
+  document.title = waitingAll ? `(${waitingAll}) Crew` : 'Crew';
+  document.getElementById('run').textContent = tech() ? 'Crew' : 'AI team chat';
+  if (!s) return renderNoRun();
   const tasks = s.batches.flatMap((b) => b.tasks);
   titles = Object.fromEntries(tasks.map((t) => [t.id, t.title ?? t.id]));
   const states = Object.fromEntries(tasks.map((t) => [t.id, t.state]));
   const desc = Object.fromEntries(tasks.map((t) => [t.id, describe(t, states)]));
   if (current !== 'all' && !titles[current]) current = 'all';
+  if (shownRun !== s.run) { resetRunView(); shownRun = s.run; }
 
-  document.title = s.waiting.length ? `(${s.waiting.length}) Crew · ${s.run}` : `Crew · ${s.run}`;
-  document.getElementById('run').textContent = tech() ? `Crew · ${s.run}` : 'AI team chat';
-  document.getElementById('cost').textContent = tech() ? `${money(s.cost)} spent` : `${money(s.cost)} in AI costs so far`;
+  document.getElementById('cost').textContent = tech() ? `${money(s.cost)} spent on ${s.run}` : `${money(s.cost)} in AI costs on this run so far`;
 
   const convs = { all: everyone(s, tasks) };
   for (const t of tasks) convs[t.id] = conversation(t);
@@ -406,14 +447,36 @@ function render(s) {
     : 'You’re watching. To step in, ask the lead AI in Claude Code.';
 }
 
-function convRow(id, { avatar, name, when, preview, typingNow, unread, pill }) {
-  const b = el('button', 'conv');
+// Shown while the open run loads, or when there is no run yet: just the list of runs.
+function renderNoRun() {
+  document.getElementById('cost').textContent = '';
+  renderList(null);
+  const head = document.getElementById('head');
+  head.replaceChildren();
+  const info = el('div', 'info');
+  info.append(el('div', 'title', runId ? runName(runId) : tech() ? 'No runs' : 'Nothing here yet'));
+  head.append(info);
+  const box = document.getElementById('msgs');
+  box.replaceChildren(el('div', 'empty', runId ? 'Loading…' : tech()
+    ? 'No runs in the state dir yet. Start one with /crew in Claude Code; it shows up here on its own.'
+    : 'The AI team hasn’t started any work yet. Ask the lead AI in Claude Code to start, and it appears here.'));
+  document.getElementById('typing').replaceChildren();
+  document.getElementById('composer').textContent = tech()
+    ? 'Read-only. Talk to the crew through the boss in your Claude Code session.'
+    : 'You’re watching. To step in, ask the lead AI in Claude Code.';
+}
+
+function convRow(id, { avatar, name, when, preview, typingNow, unread, pill, cls, onclick, selected, open }) {
+  const b = el('button', `conv${cls ? ` ${cls}` : ''}`);
   b.type = 'button';
-  b.setAttribute('aria-current', String(id === current));
-  b.onclick = () => select(id);
+  b.setAttribute('aria-current', String(selected ?? id === current));
+  if (open != null) b.setAttribute('aria-expanded', String(open));
+  b.onclick = onclick ?? (() => select(id));
   const top = el('div', 'side');
   top.append(el('span', 'when', when ?? ''));
-  b.append(avatar, el('div', 'name', name), top, el('div', `prev${typingNow ? ' typing' : ''}`, preview ?? ''));
+  const nameEl = el('div', 'name');
+  nameEl.append(name);
+  b.append(avatar, nameEl, top, el('div', `prev${typingNow ? ' typing' : ''}`, preview ?? ''));
   const side = el('div', 'side');
   if (pill) side.append(pill);
   if (unread > 0) side.append(el('span', 'badge', String(unread)));
@@ -426,9 +489,33 @@ function previewOf(msg) {
   return `${nameOf(msg.from)}: ${msg.lead ?? msg.text ?? ''}`.split('\n')[0];
 }
 
+// The thread list: every run, and under the open one its "everyone" channel, batches and tasks.
 function renderList(s, tasks, desc, convs) {
   const list = document.getElementById('list');
-  list.replaceChildren();
+  list.replaceChildren(el('div', 'group', tech() ? 'Runs' : 'Projects'));
+  for (const r of runs) {
+    const isOpen = r.id === runId;
+    const tone = r.waiting ? 'amber' : r.active ? 'blue' : r.tasks && r.finished === r.tasks ? 'green' : 'gray';
+    const parts = [r.tasks ? `${r.finished} of ${plural(r.tasks, 'task')} ${tech() ? 'finished' : 'done'}` : (tech() ? 'planning' : 'Being planned'),
+      r.waiting ? `${r.waiting} ${tech() ? 'waiting on the boss' : (r.waiting === 1 ? 'needs a decision' : 'need a decision')}` : null];
+    const name = el('span');
+    name.append(el('span', 'chev', isOpen ? '▾' : '▸'), document.createTextNode(` ${runName(r.id)}`));
+    list.append(convRow(r.id, {
+      cls: 'run', open: isOpen, selected: isOpen && current === 'all', onclick: () => openRun(r.id),
+      avatar: el('div', `av c-gray ring-${tone}`, initials(runName(r.id))), name,
+      when: ago(r.updated), preview: parts.filter(Boolean).join(' · '),
+      pill: r.active ? el('span', 'pill c-blue', tech() ? 'running' : 'active') : null,
+    }));
+    if (isOpen) {
+      const thread = el('div', 'thread');
+      if (s) renderThread(thread, s, tasks, desc, convs);
+      else thread.append(el('div', 'group', 'Loading…'));
+      list.append(thread);
+    }
+  }
+}
+
+function renderThread(list, s, tasks, desc, convs) {
   if (s.waiting.length) {
     list.append(el('div', 'waiting', `${tech() ? 'Waiting on the boss' : 'Needs a decision'}: ${s.waiting.map((w) => tech() ? w.id : `“${titleOf(w.id)}”`).join(', ')}`));
   }
@@ -575,7 +662,7 @@ function renderMessages(msgs, inEveryone, emptyText) {
       const more = el('button', 'more', open ? 'Show less' : 'Show more');
       more.type = 'button';
       more.setAttribute('aria-expanded', String(open));
-      more.onclick = () => { open ? expanded.delete(m.key) : expanded.add(m.key); render(snap); };
+      more.onclick = () => { open ? expanded.delete(m.key) : expanded.add(m.key); render(); };
       col.append(more);
     }
     col.append(el('div', 'stamp', clock(m.ts)));
@@ -603,19 +690,29 @@ function renderTyping(tasks, inEveryone) {
   }
 }
 
+// One stream for the open run. The server sends the run list too, so new runs show up without reloading.
 const dot = document.getElementById('dot');
 const status = document.getElementById('status');
-const stream = new EventSource('/stream');
-stream.onmessage = (m) => {
-  const s = JSON.parse(m.data);
-  if (s.error) { status.textContent = s.error; return; }
-  dot.classList.add('on');
-  status.textContent = 'live';
-  render(s);
-};
-stream.onerror = () => { dot.classList.remove('on'); status.textContent = 'reconnecting…'; };
+let stream = null;
+function connect() {
+  stream?.close();
+  stream = new EventSource(`/stream?run=${encodeURIComponent(runId)}`);
+  stream.onmessage = (m) => {
+    const p = JSON.parse(m.data);
+    runs = p.runs;
+    // The server falls back to the newest run when the asked-for one is gone (or none was asked for).
+    if (p.run !== runId) { runId = p.run ?? ''; if (p.run) store('crew-run', p.run); current = 'all'; }
+    dot.classList.add('on');
+    status.textContent = 'live';
+    if (p.snapshot?.error) { status.textContent = p.snapshot.error; snap = null; }
+    else snap = p.snapshot;
+    render();
+  };
+  stream.onerror = () => { dot.classList.remove('on'); status.textContent = 'reconnecting…'; };
+}
+connect();
 // Keep the "x min ago" texts fresh between pushes.
-setInterval(() => snap && render(snap), 5000);
+setInterval(render, 5000);
 </script>
 </body>
 </html>

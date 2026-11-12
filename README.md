@@ -78,7 +78,7 @@ Then, in Claude Code inside your project, on your strongest model:
 
 Start with one small issue, and read the contract before you rehearse it. That's where a misunderstanding costs nothing to fix.
 
-Follow a run with `/crew status <run-id>` and `/crew cost <run-id>`. For a live view, run `node .claude/skills/crew/dashboard.mjs <run-id>` and open http://127.0.0.1:4777. It reads like a chat app: one conversation per task in which the boss, coder, checks and reviewer talk, plus an everyone channel for the whole run.
+Follow a run with `/crew status <run-id>` and `/crew cost <run-id>`. For a live view, run `node .claude/skills/crew/dashboard.mjs` once and leave it open at http://127.0.0.1:4777. It reads like a chat app: every run is a thread you open to see its batches, and every task is a conversation in which the boss, coder, checks and reviewer talk, plus an everyone channel per run. New runs show up on their own. Pass a run id to show only that run.
 
 ## Docs
 
