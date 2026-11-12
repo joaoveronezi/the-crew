@@ -9,8 +9,8 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  CODER_RESUME, ROOT, appendEvent, baseRef, callClaude, cfg, gh, isGithub, tryGh, withTrailer, contractPath, fingerprint, formatFindings, git, identify, killGroup, loadContract, log, now,
-  outOfScope, outputKey, readEvents, readJson, repeated, reviewProgress, retry, runDir, shell, taskState, tryGit, withLocks, worktreeOf, writeJson,
+  API_RETRY_WAITS_MIN, CODER_RESUME, ROOT, apiRetryWait, appendEvent, sleep, baseRef, callClaude, cfg, gh, isGithub, tryGh, withTrailer, contractPath, fingerprint, formatFindings, git, identify, killGroup, loadContract, log, now,
+  outOfScope, outputKey, readEvents, readJson, repeated, reviewProgress, retry, runDir, sandboxAvailable, sandboxedShell, shell, taskState, tryGit, withLocks, worktreeOf, writeJson,
 } from './lib.mjs';
 
 const [run, id] = process.argv.slice(2);
@@ -45,7 +45,7 @@ const state = taskState(readEvents(run), id);
 if (st.contract !== c.version) save({ contract: c.version, phase: existsSync(wt) ? 'code' : 'prepare', round: 1, findings: [], fingerprints: [], coder_session: null });
 if (state === 'rebase_needed') save({ phase: 'sync', sync_rounds: 0 });
 const HANDED_OFF = ['help', 'escalate', 'blocked', 'needs_replan'];
-if (['retry', 'replanned'].includes(state) && HANDED_OFF.includes(st.phase)) save({ phase: st.resume_phase ?? 'code', coder_failures: 0, reviewer_failures: 0 });
+if (['retry', 'replanned'].includes(state) && HANDED_OFF.includes(st.phase)) save({ phase: st.resume_phase ?? 'code', coder_failures: 0, reviewer_failures: 0, coder_api_failures: 0, reviewer_api_failures: 0 });
 
 const head = () => git(wt, 'rev-parse', 'HEAD');
 const changedVsBase = () => [...new Set([
@@ -63,9 +63,17 @@ function nextRound(findings, { counts = true } = {}) {
   save({ phase: 'code', round: counts ? st.round + 1 : st.round, findings, fingerprints: prints });
 }
 
-// A dead `claude -p` (timeout/crash) is retried once in place; budget overruns and repeats go upward.
-function callFailed(role, failure) {
+// A transient API failure (connection, overload, rate limit) is waited out with growing pauses, the heartbeat still
+// beating. Any other dead `claude -p` (timeout/crash) is retried once in place; budget overruns and repeats go upward.
+async function callFailed(role, { failure, transient }) {
   if (/budget/i.test(failure)) stop('escalate', { reason: `${role} hit its $${c.budget_usd[role]} budget`, resume_phase: st.phase });
+  const apiKey = `${role}_api_failures`;
+  const wait = transient ? apiRetryWait(st[apiKey] ?? 0) : null;
+  if (wait !== null) {
+    save({ [apiKey]: (st[apiKey] ?? 0) + 1 });
+    log(`${role}: ${failure}; calling again in ${wait / 60_000} min (wait ${st[apiKey]} of ${API_RETRY_WAITS_MIN.length})`);
+    return sleep(wait);
+  }
   const key = `${role}_failures`;
   if ((st[key] ?? 0) >= 1) { save({ resume_phase: st.phase }); stop('help', { reason: `${role} call failed twice: ${failure}`, log: logs }); }
   save({ [key]: (st[key] ?? 0) + 1 });
@@ -82,6 +90,7 @@ async function prepare() {
   save({ base_sha: st.base_sha ?? git(wt, 'merge-base', 'HEAD', BASE) });
   for (const [i, cmd] of c.setup.entries()) {
     if (st.setup_done?.includes(i)) continue;
+    // Setup runs the base branch's own code before the coder has written anything, so it runs as the user.
     const r = await shell(cmd, { cwd: wt, logFile: join(logs, `setup-${i}.log`), timeoutMin: c.timeout_min.setup, onSpawn });
     if (r.code !== 0) { save({ resume_phase: 'prepare' }); stop('help', { reason: `setup failed: ${cmd} (exit ${r.code})`, output: r.out }); }
     save({ setup_done: [...(st.setup_done ?? []), i] });
@@ -107,12 +116,14 @@ ${repair}`;
     cwd: wt, logFile: join(logs, `r${st.round}-coder.jsonl`), onSpawn, resume, ledger: ledger(),
   }));
   save({ cost: st.cost + r.cost, coder_session: r.ok ? r.session : null });
-  if (!r.ok) return callFailed('coder', r.failure);
+  if (!r.ok) return callFailed('coder', r);
+  save({ coder_api_failures: 0 });
   const { status, summary, reason } = r.output;
   emit('round', { round: st.round, step: 'coder', status, summary });
   if (status === 'needs_replan') stop('needs_replan', { reason });
-  // The coder's own checks run inside the sandbox and are only advisory. If it reports blocked but left changes,
-  // the driver's checks (outside the sandbox) decide: green means the block was sandbox-only.
+  // The coder's own checks run inside its sandbox and are only advisory. If it reports blocked but left changes,
+  // the driver's checks (in the check sandbox, or outside it when the contract allows) decide: green means the block
+  // was the coder sandbox's alone.
   if (status === 'blocked' && !changedVsBase().length) { save({ resume_phase: 'code' }); stop('help', { reason: `coder blocked: ${reason}` }); }
   save({ phase: 'verify', coder_blocked: status === 'blocked' ? reason : null });
 }
@@ -136,13 +147,15 @@ async function verify() {
     save({ committed: true, head: head() });
   }
 
-  // 3. Commands with exit codes: acceptance checks, then gates. Each holds the contract's locks plus its own.
+  // 3. Commands with exit codes: acceptance checks, then gates. Each holds the contract's locks plus its own, and runs
+  // in the sandbox unless the contract says why it can't (a simulator, a real browser).
   const results = [];
   const all = [...c.checks, ...c.gates.map((cmd, i) => ({ id: `gate${i + 1}`, cmd, expect_exit: 0, locks: [] }))];
   for (const ch of all) {
     log(`check ${ch.id}: ${ch.cmd}`);
-    const r = await withLocks(locksFor(ch), id, () => shell(ch.cmd, { cwd: wt, logFile: join(logs, `r${st.round}-${ch.id}.log`), timeoutMin: c.timeout_min.checks, onSpawn }));
-    results.push({ id: ch.id, cmd: ch.cmd, code: r.code, ok: r.code === ch.expect_exit, out: r.out.split('\n').slice(-25).join('\n') });
+    const opts = { cwd: wt, logFile: join(logs, `r${st.round}-${ch.id}.log`), timeoutMin: c.timeout_min.checks, onSpawn };
+    const r = await withLocks(locksFor(ch), id, () => (ch.unsandboxed ? shell(ch.cmd, opts) : sandboxedShell(ch.cmd, { ...opts, worktree: wt })));
+    results.push({ id: ch.id, cmd: ch.cmd, code: r.code, ok: r.code === ch.expect_exit, unsandboxed: ch.unsandboxed ?? null, out: r.out.split('\n').slice(-25).join('\n') });
   }
   save({ checks: results.map(({ out, ...rest }) => rest) });
   const failed = results.filter((r) => !r.ok);
@@ -173,7 +186,8 @@ ${previous}`;
     git(wt, 'reset', '--hard', before); // the reviewer is read-only; undo anything it left
     git(wt, 'clean', '-fd');
   }
-  if (!r.ok) return callFailed('reviewer', r.failure);
+  if (!r.ok) return callFailed('reviewer', r);
+  save({ reviewer_api_failures: 0 });
   const { verdict, previous: statuses, blocking, non_blocking, acceptance, reason } = r.output;
   const failedAcs = acceptance.filter((a) => a.result === 'fail');
   const progress = reviewProgress(st.prev_review, statuses, st.strikes);
@@ -210,7 +224,7 @@ async function sync() {
 // The report replaces a pull request: what changed, what proved it, what the reviewer noted. `crew merge` uses it as
 // the squash commit body, so the evidence lands in the history.
 function report() {
-  const rows = (st.checks ?? []).map((r) => `| ${r.id} | \`${r.cmd}\` | exit ${r.code} ${r.ok ? '✅' : '❌'} |`);
+  const rows = (st.checks ?? []).map((r) => `| ${r.id} | \`${r.cmd}\`${r.unsandboxed ? ` (outside the sandbox: ${r.unsandboxed})` : ''} | exit ${r.code} ${r.ok ? '✅' : '❌'} |`);
   const judged = (st.review?.acceptance ?? []).map((a) => `| ${a.id} | review | ${a.result === 'pass' ? '✅' : '❌'} ${a.evidence} |`);
   const notes = (st.review?.non_blocking ?? []).map((f) => `- [${f.severity}] ${f.category} — ${f.file}${f.line ? `:${f.line}` : ''} — ${f.problem}`);
   return [
@@ -282,6 +296,8 @@ const PHASES = { prepare, code, verify, review, sync, publish, ci, handoff };
 try {
   log(`driver ${id} v${c.version} start: phase=${st.phase} round=${st.round}${DRY ? ' (dry run)' : ''}`);
   save();
+  // Fail closed before any work: without the check sandbox, coder-written code would run with the user's rights.
+  if (!sandboxAvailable()) stop('escalate', { reason: 'the check sandbox needs macOS (sandbox-exec)' });
   for (;;) {
     const step = PHASES[st.phase];
     if (!step) throw new Error(`driver cannot continue from phase ${st.phase}`);

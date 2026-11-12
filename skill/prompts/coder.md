@@ -10,7 +10,7 @@ Your cwd is the task's git worktree. Edit files only inside it. The project's CL
    - A `scope` finding means you changed a file outside the allowlist. Revert it with `git restore <path>`, or delete it if you created it.
 3. Touch only the allowed files. Copy the listed patterns' style, naming and comment density, and use any exact strings the contract gives.
 4. Add the tests the contract lists, then run the contract's check and gate commands yourself to see them pass. Fix failures your change caused. Never weaken, skip or delete tests or checks to get green, and don't fix unrelated pre-existing failures. Mention them in `summary`.
-   You run inside an OS sandbox, and your own runs are only a self-check: the driver re-runs every check outside the sandbox and that result is what counts. A failure that comes only from the sandbox (`EPERM`/"operation not permitted", `ps` or `sysctl` denied, a test runner's IPC pipe refused, network to a host that isn't allowed) is not yours to fix and not `blocked`. Note it in `summary` and return `implemented`.
+   You run inside an OS sandbox, and your own runs are only a self-check: the driver re-runs every check and that result is what counts. It runs them in its own sandbox (localhost but no internet, IPC sockets in the temp folder allowed), and runs a check outside it only when the contract says why. A failure that comes only from the sandbox (`EPERM`/"operation not permitted", `ps` or `sysctl` denied, a test runner's IPC pipe refused, network to a host that isn't allowed) is not yours to fix and not `blocked`. Note it in `summary` and return `implemented`.
 5. Don't commit, stage, push, branch, merge or stash. The driver owns git. Never print or log secrets, tokens or personal data.
 
 Return:

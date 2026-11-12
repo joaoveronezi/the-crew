@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import {
   checkTransition, fingerprint, identify, isRunning, npmScriptsReferenced, orderingErrors, outOfScope, outputKey, repeated,
   reviewProgress, sandboxSettings, shapeErrors, taskState, withConfigDefaults, withDefaults, withTrailer, ROOT, callShare, callUsage, sumCosts, baseRef, isGithub, ROLE_TOOLS,
+  apiRetryWait, callFailure, API_RETRY_WAITS_MIN, checkProfile, sandboxAvailable, sandboxedShell, withoutCredentials,
 } from '../skill/lib.mjs';
 import {
   issueErrors, normalizeIssue, parseFrontMatter, parseJsonIssues, parseMdIssues, updateFrontMatterIssue, updateJsonIssues, updateMdIssue,
@@ -90,6 +92,66 @@ test('sandbox rules come from the config and never cover the worktree folder', (
   assert.ok(!s.permissions.deny.some((r) => r.includes(`/${config.worktreeDir}`)), 'worktrees stay editable');
 });
 
+test('an unsandboxed check must say why', () => {
+  const check = (over) => contract({ checks: [{ id: 'AC1', cmd: 'x', expect_exit: 0, ...over }] });
+  assert.deepEqual(shapeErrors(check({})), []);
+  assert.deepEqual(shapeErrors(check({ unsandboxed: 'drives the iOS simulator' })), []);
+  for (const bad of [true, '', '  ']) assert.ok(shapeErrors(check({ unsandboxed: bad })).some((e) => /unsandboxed must say why/.test(e)), JSON.stringify(bad));
+});
+
+test('the check profile allows the worktree and temp sockets, and denies secrets, the internet and app launches', () => {
+  const profile = checkProfile(ROOT, withConfigDefaults({ secretFiles: ['.env', 'config/*.key'] }));
+  const root = realpathSync(ROOT);
+  assert.match(profile, /^\(version 1\)\n\(allow default\)\n\(deny file-write\*\)/);
+  assert.ok(profile.includes(`(subpath "${root}")`), 'the worktree is writable');
+  assert.ok(profile.includes(`(deny file-write* (literal "${join(root, '.git')}")`), 'its .git pointer is not');
+  assert.ok(profile.includes('(regex #"^' + root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(.*/)?\\.env$")'), 'nested .env');
+  assert.ok(profile.includes('/(.*/)?config/[^/]*\\.key$'), 'secret globs match one path segment');
+  assert.ok(profile.includes(`(subpath "${join(homedir(), 'Library/Keychains')}")`), 'keychain files');
+  for (const rule of ['(global-name-prefix "com.apple.CoreSimulator")', '(deny network*)', '(allow network-outbound (remote ip "localhost:*"))', '(deny lsopen)', '(deny appleevent-send)', 'com.apple.SecurityServer'])
+    assert.ok(profile.includes(rule), rule);
+  assert.ok(!/unix-socket \(subpath "[^"]*\.docker/.test(profile), 'no Docker socket');
+  assert.throws(() => checkProfile(ROOT, withConfigDefaults({ secretFiles: ['a"b'] })), /can't build a sandbox rule/);
+});
+
+test('credential-looking environment variables never reach sandboxed commands', () => {
+  const env = withoutCredentials({ PATH: '/bin', HOME: '/h', GH_TOKEN: 'x', ANTHROPIC_API_KEY: 'x', AWS_SECRET_ACCESS_KEY: 'x', DB_PASSWORD: 'x', GIT_AUTHOR_NAME: 'me', NODE_ENV: 'test' });
+  assert.deepEqual(Object.keys(env).sort(), ['GIT_AUTHOR_NAME', 'HOME', 'NODE_ENV', 'PATH']);
+});
+
+// Runs real commands through macOS's sandbox-exec; skipped elsewhere. Every escape tried on 2026-11-12 is here.
+test('sandboxed commands keep their exit code and cannot reach secrets, the internet, the git pointer or other apps', { skip: !sandboxAvailable() }, async () => {
+  const wt = join(ROOT, '.worktrees', `crew-sbx-${process.pid}`);
+  execFileSync('git', ['worktree', 'add', '-q', '--detach', wt]);
+  const config = withConfigDefaults({});
+  const logDir = mkdtempSync(join(tmpdir(), 'crew-sbx-log-'));
+  const sh = async (cmd) => (await sandboxedShell(cmd, { worktree: wt, config, cwd: wt, logFile: join(logDir, 'out.log'), timeoutMin: 2 })).code;
+  const probe = join(homedir(), `.crew-sandbox-probe-${process.pid}`);
+  try {
+    assert.equal(await sh('exit 7'), 7);
+    assert.equal(await sh('touch inside && test -f inside'), 0, 'the worktree is writable');
+    assert.notEqual(await sh(`touch ${probe}`), 0);
+    assert.ok(!existsSync(probe), 'nothing written outside the worktree');
+    assert.notEqual(await sh('echo "gitdir: /tmp/evil" > .git'), 0, 'the .git pointer is read-only');
+    writeFileSync(join(wt, '.env'), 'SECRET=1\n');
+    assert.notEqual(await sh('cat .env'), 0, 'secret files are unreadable at any depth');
+    if (existsSync(join(homedir(), '.ssh'))) assert.notEqual(await sh('ls ~/.ssh'), 0, 'home credentials are unreadable');
+    assert.notEqual(await sh('security find-generic-password -s "Claude Code-credentials" -w >/dev/null'), 0, 'the keychain is unreachable');
+    assert.notEqual(await sh('curl -sS -m 5 -o /dev/null https://registry.npmjs.org/'), 0, 'no internet');
+    assert.notEqual(await sh('open -g -a TextEdit'), 0, 'no launching apps outside the sandbox');
+    assert.notEqual(await sh('xcrun simctl list devices 2>&1 | grep -q "connection became invalid" && exit 1 || exit 0'), 0, 'no simulator');
+    const ipc = `node -e "const s=require('net').createServer().listen(require('path').join(require('os').tmpdir(),'crew-'+process.pid+'.sock'),()=>s.close())"`;
+    assert.equal(await sh(ipc), 0, 'test runners can open IPC sockets in the temp folder');
+    const local = `node -e "const n=require('net');const s=n.createServer((c)=>c.end('ok')).listen(0,'127.0.0.1',()=>n.connect(s.address().port,'127.0.0.1').on('data',(d)=>process.exit(String(d)==='ok'?0:1)).on('error',()=>process.exit(1)))"`;
+    assert.equal(await sh(local), 0, 'localhost works (test databases, dev servers)');
+    process.env.CREW_TEST_TOKEN = 'leak';
+    assert.equal(await sh('test -z "$CREW_TEST_TOKEN"'), 0, 'credential env vars are dropped');
+  } finally {
+    delete process.env.CREW_TEST_TOKEN;
+    execFileSync('git', ['worktree', 'remove', '--force', wt]);
+  }
+});
+
 test('issues.json: parse, update status and log, keep the wrapper', () => {
   const text = JSON.stringify({ issues: [{ id: 12, title: 'CSV', status: 'todo', depends_on: [9] }, { id: 9, title: 'S3', status: 'closed' }] });
   const list = parseJsonIssues(text).map(normalizeIssue);
@@ -171,6 +233,28 @@ test('a resumed call is charged only its share of the cumulative session totals'
   assert.ok(Math.abs(share.cost - 0.2) < 1e-9);
   assert.deepEqual(share.tokens, { input: 20, output: 5, cache_write: 100, cache_write_1h: 100, cache_read: 5000 });
   assert.deepEqual(callShare(total, null), total, 'a fresh call is its own total');
+});
+
+test('a dropped connection is a transient failure; auth, timeouts and missing output are not', () => {
+  // The shape `claude -p` wrote when DNS failed mid-run (2026-11-11): api_error set, subtype still "success".
+  const dropped = { type: 'result', subtype: 'success', is_error: true, api_error: 'connection_failed', result: "API Error: Can't reach the API server" };
+  assert.deepEqual(callFailure(dropped, false), { failure: 'api error: connection_failed', transient: true });
+  for (const e of ['server_error', 'overloaded', 'rate_limit']) assert.equal(callFailure({ ...dropped, api_error: e }, false).transient, true, e);
+  assert.deepEqual(callFailure({ ...dropped, api_error: 'authentication_failed' }, false), { failure: 'api error: authentication_failed', transient: false });
+  assert.deepEqual(callFailure(null, true), { failure: 'timeout', transient: false });
+  assert.deepEqual(callFailure({ subtype: 'error_max_budget_usd', is_error: true }, false), { failure: 'error_max_budget_usd', transient: false });
+  assert.deepEqual(callFailure({ subtype: 'success', is_error: false }, false), { failure: 'no structured output', transient: false });
+  assert.deepEqual(callFailure({ subtype: 'success', is_error: false, structured_output: { status: 'implemented' } }, false), { failure: null, transient: false });
+  assert.equal(callFailure({ is_error: true, structured_output: { status: 'implemented' } }, false).failure, 'no structured output', 'an error result never counts as success');
+});
+
+test('transient API failures wait longer each time, about two hours in all, then stop', () => {
+  assert.equal(apiRetryWait(0), 60_000);
+  const waits = API_RETRY_WAITS_MIN.map((_, i) => apiRetryWait(i));
+  waits.slice(1).forEach((w, i) => assert.ok(w > waits[i], 'each wait is longer than the last'));
+  const totalMin = waits.reduce((a, b) => a + b, 0) / 60_000;
+  assert.ok(totalMin >= 120 && totalMin <= 150, `total ${totalMin} min`);
+  assert.equal(apiRetryWait(API_RETRY_WAITS_MIN.length), null);
 });
 
 test('cost totals group ledger entries by key, triage included', () => {

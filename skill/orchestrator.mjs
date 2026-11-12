@@ -8,7 +8,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:f
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import {
-  DONE_FOR_DEPENDANTS, FINISHED, ROOT, RUNNABLE, SKILL, WAITING_ON_BOSS, appendEvent, callClaude, contractPath,
+  DONE_FOR_DEPENDANTS, FINISHED, ROOT, RUNNABLE, SKILL, WAITING_ON_BOSS, apiRetryWait, appendEvent, callClaude, contractPath,
   identify, isRunning, killGroup, lastStatus, loadBatch, loadContract, log, now, readEvents, readJson, runDir, sleep, tail, worktreeOf, writeJson,
 } from './lib.mjs';
 
@@ -76,10 +76,18 @@ ${existsSync(logFile) ? tail(readFileSync(logFile, 'utf8'), 60) : '(none)'}
 Per-step logs: ${join(runDir(run), 'logs', id)}
 Contract: ${contractPath(run, id)} (locks: ${c.locks.join(', ') || 'none'})`;
     log(`triage ${id}: ${why}`);
-    const r = await callClaude({
-      role: 'triage', model: 'sonnet', prompt, budget: c.budget_usd.triage, timeoutMin: 20, cwd: ROOT,
-      logFile: join(runDir(run), 'logs', id, `triage-${d.triages}.jsonl`), ledger: { run, task: id, round: null, version: c.version },
-    });
+    // An unreachable API isn't a diagnosis: wait it out like the driver does instead of escalating to the boss.
+    let r;
+    for (let attempt = 0; ; attempt++) {
+      r = await callClaude({
+        role: 'triage', model: 'sonnet', prompt, budget: c.budget_usd.triage, timeoutMin: 20, cwd: ROOT,
+        logFile: join(runDir(run), 'logs', id, `triage-${d.triages}${attempt ? `-retry${attempt}` : ''}.jsonl`), ledger: { run, task: id, round: null, version: c.version },
+      });
+      const wait = r.transient ? apiRetryWait(attempt) : null;
+      if (wait === null) break;
+      log(`triage ${id}: ${r.failure}; calling again in ${wait / 60_000} min`);
+      await sleep(wait);
+    }
     const { action, diagnosis, fixed } = r.ok ? r.output : { action: 'escalate', diagnosis: `triage call failed: ${r.failure}` };
     emit('triage', id, { why, action, diagnosis, fixed, cost_usd: Math.round(r.cost * 100) / 100 });
     const state = lastStatus(readEvents(run), id)?.type ?? 'none';

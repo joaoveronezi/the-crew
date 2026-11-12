@@ -40,7 +40,7 @@ What the driver executes and `crew validate` checks. It must agree with the pros
 | `id` | Letters, digits, `.`, `_`, `-`. Also the worktree name |
 | `issue` | The tracker id (`crew issues`). Its status goes `in_progress` on `crew start` and `done` on merge |
 | `allowed_files` | Every path the branch may differ from the base in. `edit`/`delete` must exist on the base branch; `create` must not. Issue files and crew files are never allowed. A diff outside this list is a `scope` finding |
-| `checks` | Acceptance criteria a command can prove (exit code). A check may name `locks` it needs. Criteria that need judgment stay in the `.md` only; the reviewer reports them. To prove tests really ran, grep the runner's output for the new test names and for zero skipped |
+| `checks` | Acceptance criteria a command can prove (exit code). A check may name `locks` it needs. Criteria that need judgment stay in the `.md` only; the reviewer reports them. To prove tests really ran, grep the runner's output for the new test names and for zero skipped. A check runs in the sandbox unless it has `"unsandboxed": "<why>"`, for a check that truly can't work there (a simulator, a real browser, Docker, the internet). Only with the user's agreement |
 | `gates` | Commands that must exit 0. `npm run X` scripts must exist on the base |
 | `locks` | Locks held for the coder and every check (names from the config) |
 | `depends_on` | Required when two tasks share a file or a `sensitivePaths` area (`validate` enforces it) |
