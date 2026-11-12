@@ -46,4 +46,4 @@ total                          3      0.09    44k          172k        79%
 
 - No run-wide budget, and no estimate before a run starts.
 - The boss session's own spend isn't in the ledger.
-- A subscription usage limit looks like a failed call: one retry, then triage.
+- A transient API failure (connection, overload, rate limit) is waited out for about two hours before it becomes `help`. A subscription usage limit that lasts longer still ends as `help`, then triage.

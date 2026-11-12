@@ -20,7 +20,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { join, relative } from 'node:path';
 import {
   CONFIG_FILE, DONE_FOR_DEPENDANTS, ROOT, SKILL, appendEvent, baseRef, cfg, gh, isGithub, tryGh, contractPath, git, isRunning, killGroup, lastStatus, loadBatch,
-  npmScriptsReferenced, orderingErrors, readCosts, readEvents, readJson, runDir, shapeErrors, shell, sleep, sumCosts, tryGit, withDefaults, withTrailer, worktreeOf,
+  npmScriptsReferenced, orderingErrors, readCosts, readEvents, readJson, runDir, sandboxAvailable, shapeErrors, shell, sleep, sumCosts, tryGit, withDefaults, withTrailer, worktreeOf,
 } from './lib.mjs';
 import { issueErrors, issueTracker } from './issues.mjs';
 
@@ -49,6 +49,7 @@ const issuePaths = () => [cfg().issues.file, cfg().issues.adapter].filter(Boolea
 async function validate() {
   const config = cfg();
   const errors = [];
+  if (!sandboxAvailable()) errors.push('checks run in a sandbox, which needs macOS (sandbox-exec)');
   if (isGithub(config)) tryGit(ROOT, 'fetch', config.delivery.remote, config.baseBranch);
   const batches = Object.fromEntries(batchIds().map((b) => [b, loadBatch(run, b)]));
   const ids = taskIds();
@@ -100,8 +101,16 @@ async function validate() {
   return errors;
 }
 
-// Not errors, but worth a second look: the same model reviewing its own kind of output makes correlated mistakes.
+// Not errors, but worth a second look: checks that run coder-written code outside the sandbox (the user must agree to
+// each), and models that make correlated mistakes.
 function warnings() {
+  return [...unsandboxedWarnings(), ...modelWarnings()];
+}
+function unsandboxedWarnings() {
+  return taskIds().map(contract).flatMap((c) => c.checks.filter((ch) => ch.unsandboxed)
+    .map((ch) => `${c.id}: check ${ch.id} runs outside the sandbox, with your rights (${ch.unsandboxed}); confirm with the user`));
+}
+function modelWarnings() {
   const rank = { haiku: 0, sonnet: 1, opus: 2 };
   const security = new RegExp(cfg().securityPaths, 'i');
   return taskIds().map(contract).flatMap((c) => {
@@ -244,6 +253,7 @@ const commands = {
     ok(true, `git repo at ${ROOT}`);
     const claude = await shell('claude --version', { logFile: join(ROOT, '.git', 'crew-doctor.log'), timeoutMin: 1 });
     ok(claude.code === 0, `claude CLI ${claude.out.split('\n')[0]}`);
+    ok(sandboxAvailable(), `check sandbox (sandbox-exec)${sandboxAvailable() ? '' : ': needs macOS'}`);
     if (!existsSync(CONFIG_FILE)) { ok(false, `${relative(ROOT, CONFIG_FILE)} missing: run "/crew adapt"`); return console.log(lines.join('\n')); }
     const config = cfg();
     ok(true, `config ${relative(ROOT, CONFIG_FILE)}`);

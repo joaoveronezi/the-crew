@@ -2,7 +2,7 @@
 // locks and `claude -p` calls. Everything here is deterministic; judgment lives only in prompts/ and the boss.
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,11 +120,11 @@ export async function retry(fn, tries = 3, waitMs = 5000) {
 }
 
 // Runs a command with its output in logFile, killing the whole process group after timeoutMin.
-export function run(cmd, args, { cwd = ROOT, input, logFile, timeoutMin = 30, env, onSpawn } = {}) {
+export function run(cmd, args, { cwd = ROOT, input, logFile, timeoutMin = 30, env, baseEnv = process.env, onSpawn } = {}) {
   mkdirSync(dirname(logFile), { recursive: true });
   return new Promise((resolve) => {
     const fd = openSync(logFile, 'w');
-    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, detached: true, stdio: [input == null ? 'ignore' : 'pipe', fd, fd] });
+    const child = spawn(cmd, args, { cwd, env: { ...baseEnv, ...env }, detached: true, stdio: [input == null ? 'ignore' : 'pipe', fd, fd] });
     closeSync(fd);
     onSpawn?.(child.pid);
     if (input != null) child.stdin.end(input);
@@ -225,6 +225,7 @@ export function shapeErrors(c, { dryRun = false, branchPrefix = CONFIG_DEFAULTS.
   need(Array.isArray(c.allowed_files) && c.allowed_files.length > 0, 'allowed_files is empty');
   for (const f of c.allowed_files ?? []) need(str(f.path) && ['edit', 'create', 'delete'].includes(f.op), `bad allowed_files entry ${JSON.stringify(f)}`);
   for (const ch of c.checks) need(str(ch.id) && str(ch.cmd) && Number.isInteger(ch.expect_exit), `bad check ${JSON.stringify(ch)}`);
+  for (const ch of c.checks) need(ch.unsandboxed === undefined || str(ch.unsandboxed), `check ${ch.id}: unsandboxed must say why the check can't run in the sandbox`);
   need(c.checks.length + c.gates.length > 0, 'no checks or gates: nothing deterministic proves the change');
   for (const g of [...c.gates, ...c.setup]) need(str(g), 'empty gate/setup command');
   for (const l of [...c.locks, ...c.checks.flatMap((ch) => ch.locks)]) need(lockNames.includes(l), `unknown lock ${l} (declare it in crew.config.json "locks")`);
@@ -452,6 +453,73 @@ export function sandboxSettings(worktree, config = cfg()) {
   };
 }
 
+// Checks and gates execute code the coder wrote (setup runs before the coder starts, on the base branch's code, so it
+// runs as you, like your own `npm ci`), so by default they run in macOS's built-in sandbox (sandbox-exec:
+// nothing to install). The profile starts from "allow" and denies what matters, each rule tested on 2026-11-12:
+// - writes: only the worktree, temp and package caches. Not the worktree's `.git` pointer or its git folder: a
+//   rewritten pointer could aim the driver's own (unsandboxed) git at a config that runs any command;
+// - reads: no home credentials, no `secretFiles` at any depth of the repo, no keychain (Claude Code's and gh's tokens
+//   live there);
+// - network: localhost only, plus Unix sockets in the temp folders, where test runners such as tsx open their IPC
+//   pipes. No internet, and no Docker socket;
+// - no launching apps or scripting them (Launch Services, Apple Events), and no iOS Simulator (`simctl spawn` runs
+//   processes that read the host's files): each would run code outside the sandbox.
+// Environment variables that look like credentials are dropped too. A check that can't work like this (a simulator,
+// a real browser, the internet) leaves the sandbox only when its contract says why in `unsandboxed`.
+export const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
+export const sandboxAvailable = () => process.platform === 'darwin' && existsSync(SANDBOX_EXEC);
+// Seatbelt matches real paths (/tmp is /private/tmp), so resolve what exists.
+const real = (p) => { try { return realpathSync(p); } catch { return p; } };
+const sbString = (p) => {
+  if (/["\\\n]/.test(p)) throw new Error(`can't build a sandbox rule for the path ${JSON.stringify(p)}`);
+  return `"${p}"`;
+};
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// `.env` or `config/*.key` → any file by that name or pattern at any depth of the repo.
+const secretRegex = (root, glob) => {
+  if (/["\n]/.test(glob)) throw new Error(`can't build a sandbox rule for the secret file ${JSON.stringify(glob)}`);
+  return `^${escapeRegex(root)}/(.*/)?${glob.split('*').map(escapeRegex).join('[^/]*')}$`;
+};
+export function checkProfile(worktree, config = cfg()) {
+  const home = homedir();
+  const wt = real(worktree);
+  const temp = [...new Set([tmpdir(), '/tmp', '/private/tmp', '/private/var/folders'].map(real))];
+  const writable = [wt, ...temp, ...['.npm', '.cache', 'Library/Caches'].map((p) => join(home, p))];
+  const secrets = [...HOME_SECRETS.map((p) => join(home, p)), join(home, 'Library/Keychains'), '/Library/Keychains'];
+  const gitDir = git(worktree, 'rev-parse', '--path-format=absolute', '--git-dir');
+  const sub = (paths) => paths.map((p) => `(subpath ${sbString(p)})`).join(' ');
+  const sockets = (side) => temp.map((p) => `(${side} unix-socket (subpath ${sbString(p)}))`).join(' ');
+  return [
+    '(version 1)',
+    '(allow default)',
+    '(deny file-write*)',
+    `(allow file-write* ${sub(writable)} (subpath "/dev"))`,
+    `(deny file-write* (literal ${sbString(join(wt, '.git'))}) ${sub([real(gitDir)])})`,
+    `(deny file-read* ${sub(secrets)} ${config.secretFiles.map((f) => `(regex #"${secretRegex(real(ROOT), f)}")`).join(' ')})`,
+    '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc") (global-name "com.apple.security.agent") (global-name "com.apple.secd"))',
+    '(deny network*)',
+    '(allow network-outbound (remote ip "localhost:*"))',
+    '(allow network-bind network-inbound (local ip "*:*"))',
+    `(allow network-outbound ${sockets('remote')})`,
+    `(allow network-bind ${sockets('local')})`,
+    '(deny lsopen)',
+    '(deny appleevent-send)',
+    '(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd") (global-name "com.apple.coreservices.appleevents") (global-name "com.apple.coreservices.quarantine-resolver"))',
+    '(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator"))',
+  ].join('\n') + '\n';
+}
+const CREDENTIAL_ENV = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY/i;
+export const withoutCredentials = (env) => Object.fromEntries(Object.entries(env).filter(([k]) => !CREDENTIAL_ENV.test(k)));
+// Runs `command` like `shell`, inside the sandbox. The profile is written beside the command's log, outside the
+// worktree, so the command can't change it. Fails closed: off macOS, nothing runs.
+export function sandboxedShell(command, { worktree, config = cfg(), ...opts }) {
+  if (!sandboxAvailable()) throw new Error('the check sandbox needs macOS (sandbox-exec)');
+  const profile = `${opts.logFile}.sb`;
+  mkdirSync(dirname(profile), { recursive: true });
+  writeFileSync(profile, checkProfile(worktree, config));
+  return run(SANDBOX_EXEC, ['-f', profile, 'bash', '-c', command], { ...opts, baseEnv: withoutCredentials(process.env) });
+}
+
 export function lastResult(logFile) {
   if (!existsSync(logFile)) return null;
   const lines = readFileSync(logFile, 'utf8').trim().split('\n').reverse();
@@ -518,6 +586,24 @@ export function callShare(total, prior) {
   return { cost: Math.max(0, total.cost - prior.cost), tokens };
 }
 
+// The CLI reports an unreachable, overloaded or rate-limited API as a result with `api_error` set (and, measured
+// 2026-11-12, subtype "success"), so it used to read as "no structured output". Only these pass on their own; any
+// other api_error (authentication, billing, a bad request) is a real failure and is never waited out.
+export const TRANSIENT_API_ERRORS = new Set(['connection_failed', 'server_error', 'overloaded', 'rate_limit']);
+export function callFailure(result, timedOut) {
+  if (result?.structured_output && !result.is_error) return { failure: null, transient: false };
+  if (timedOut) return { failure: 'timeout', transient: false };
+  const apiError = result?.api_error ?? null;
+  if (apiError) return { failure: `api error: ${apiError}`, transient: TRANSIENT_API_ERRORS.has(apiError) };
+  if (result?.subtype && result.subtype !== 'success') return { failure: result.subtype, transient: false };
+  return { failure: 'no structured output', transient: false };
+}
+
+// Waits before calling again after a transient API failure: about two hours in all, so a dropped connection or an
+// overloaded API is ridden out unattended (one stalled a run overnight on 2026-11-11). null: stop waiting.
+export const API_RETRY_WAITS_MIN = [1, 2, 5, 10, 20, 30, 60];
+export const apiRetryWait = (attempt) => (attempt < API_RETRY_WAITS_MIN.length ? API_RETRY_WAITS_MIN[attempt] * 60_000 : null);
+
 export async function callClaude({ role, model, prompt, budget, timeoutMin, cwd, logFile, onSpawn, resume = null, ledger = null }) {
   if (resume && !ledger) throw new Error('a resumed call needs the ledger to separate its cost from the session total');
   const { tools, disallowed } = ROLE_TOOLS[role];
@@ -539,11 +625,6 @@ export async function callClaude({ role, model, prompt, budget, timeoutMin, cwd,
   const total = { cost: result?.total_cost_usd ?? 0, tokens: callUsage(result) };
   const { cost, tokens } = callShare(total, prior);
   if (ledger) recordCost(ledger.run, { ...ledger, role, model, resumed: Boolean(resume), session: result?.session_id ?? null, cost, tokens, session_total: total });
-  return {
-    ok: Boolean(output) && !result.is_error,
-    output,
-    cost,
-    session: result?.session_id ?? null,
-    failure: output ? null : r.timedOut ? 'timeout' : result?.subtype && result.subtype !== 'success' ? result.subtype : 'no structured output',
-  };
+  const { failure, transient } = callFailure(result, r.timedOut);
+  return { ok: failure === null, output, cost, session: result?.session_id ?? null, failure, transient };
 }

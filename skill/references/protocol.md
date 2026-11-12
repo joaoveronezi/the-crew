@@ -69,7 +69,8 @@ prepare ─> code ─> verify ─> review ─> sync ─┬───────�
   - The reviewer marks each earlier finding `fixed`, `partial` or `not_fixed`. `partial` continues; `not_fixed` twice in a row → `needs_replan`.
   - A deterministic failure counts as a repeat only when its output is identical (digits ignored).
   - `max_rounds` is the hard cap.
-- **The coder's own checks are advisory.** If it reports `blocked` but left changes, the driver's checks, run outside the sandbox, decide.
+- **The coder's own checks are advisory.** If it reports `blocked` but left changes, the driver's checks decide.
+- **Checks run sandboxed.** `checks` and `gates` run in macOS's `sandbox-exec`: writes only in the worktree, temp and caches; no credentials, keychain or `secretFiles`; localhost but no internet; no app launches or simulator. A check runs outside it only when its contract gives a reason in `unsandboxed`. `setup` runs the base branch's code before the coder starts, so it runs as the user.
 - **Sync.** The base is merged into the branch, never rebased. Every check runs again after that merge, so what the boss merges is exactly what was checked. Conflicts inside the allowlist go to the coder; conflicts outside it → `needs_replan`.
 - **Isolation is enforced, not requested.**
   - Coder and reviewer get no MCP servers and limited tools: no git writes, and the reviewer can't edit.
@@ -83,5 +84,6 @@ prepare ─> code ─> verify ─> review ─> sync ─┬───────�
 - **Liveness.** A process is identified by pid **and** start time, so a recycled pid never counts as alive. Kills go to the crew's own process groups only.
 - **Hung driver** (heartbeat older than 5 minutes) → killed with its `claude -p` child, then triaged. **Dead driver** with no status event → triaged. **`help` event** → triaged.
 - **Triage `retry`** relaunches the driver. After 2 triages of the same task → `escalate`.
+- **Transient API failures** (`api_error` `connection_failed`, `server_error`, `overloaded` or `rate_limit`) are waited out, not escalated: the driver and triage call again after 1, 2, 5, 10, 20, 30 and 60 minutes (about two hours). The driver's wait count lives in its status file and resets after any successful call. Any other failed call is retried once, then `help`.
 - **Restarts.** A (re)start of the orchestrator forgets dead launches and resets the triage budget.
 - **Locks** (`<stateDir>/locks/<name>`) record the holder's process identity and a per-process token. A lock is taken over when that exact process is gone.

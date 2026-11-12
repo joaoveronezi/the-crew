@@ -24,7 +24,7 @@ A single session works one issue at a time, grades its own work, and needs you w
 - **"Done" is decided by your tests, not by the model.** A script runs your checks and reads exit codes. A model saying "tests pass" counts for nothing, and a change with a red check can't be merged, not even by the boss.
 - **Independent review.** A separate reviewer reads the spec and the diff, not the coder's account of its work. It only sees code that already passes, so you don't pay to review broken code.
 - **It stops instead of spinning.** When fixes stop making progress, the task goes back to the boss to correct the spec. Nothing loops until the budget runs out.
-- **Safe to leave alone.** Coders and reviewers run in Claude Code's OS sandbox: they write only in their worktree, can't read your credentials, and can't commit, push or merge. Every process survives a crash and resumes where it stopped.
+- **Safe to leave alone.** Coders and reviewers run in Claude Code's OS sandbox: they write only in their worktree, can't read your credentials, and can't commit, push or merge. The checks that run their code are sandboxed too, with macOS's built-in sandbox, unless you agree to let a specific check out (an iOS simulator, say). Every process survives a crash and resumes where it stopped.
 - **Cheap per task.** A Haiku coder, a Sonnet reviewer, and a prompt cache shared across agents. A one-task rehearsal measured $0.05–0.09.
 
 Models do only what needs judgment: the spec, the code and the review. Scheduling, scope checks, tests, git and merge decisions are plain scripts.
@@ -90,7 +90,7 @@ Follow a run with `/crew status <run-id>` and `/crew cost <run-id>`. For a live 
 ## Limits
 
 - Budgets are per call. There's no run-wide budget or pre-run estimate yet, and the boss session's own spend isn't tracked.
-- Hitting a subscription's usage limit shows up as a failed call, not a pause.
+- A dropped connection or an overloaded API is waited out for about two hours. A subscription usage limit that lasts longer still stops the task for the boss.
 - PR delivery is GitHub only. Issues can come from anywhere.
 
 ## License
