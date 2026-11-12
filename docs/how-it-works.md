@@ -52,7 +52,7 @@ A task stops when it needs a decision. Everything else continues.
 
 | state | meaning | what happens |
 | --- | --- | --- |
-| `ready_to_merge` | approved, every check green, up to date with the base | the boss runs `crew merge-check`, reads the diff and the report, then merges or vetoes |
+| `ready_to_merge` | approved, every check green, up to date with the base | the boss runs `crew merge-check`, reads the diff and the report, then merges (`local`) or vetoes. With `github` delivery it reports the PR as ready and merges only when you ask |
 | `needs_replan` | the contract can't produce a correct change | the boss fixes that contract (version +1) and the driver continues on the same branch |
 | `help` | the environment is broken: a database is down, a port is taken | triage diagnoses it and may repair it; the task resumes |
 | `escalate` | over budget, or triage couldn't fix it | the boss retries, replans, blocks or abandons |
@@ -82,9 +82,9 @@ Each task has two files in the run directory, written by the boss:
 | --- | --- | --- |
 | branches start from | the local base branch | `<remote>/<base>` |
 | after approval | the task waits for the boss | the driver pushes, opens a PR with the report as its body, and waits for CI. Red CI is re-run once per commit before it counts as a finding |
-| `crew merge` | squash-merges on your machine, with the report as the commit body | squash-merges the PR with `gh`, at the approved commit |
+| `crew merge` | squash-merges on your machine, with the report as the commit body | squash-merges the PR with `gh`, at the approved commit. The boss runs it only when you ask (`/crew merge`); dependants wait until then |
 | issue status | updated with the merge | GitHub Issues are commented and closed; file trackers are updated in the wrap-up PR |
-| `crew wrapup` | commits every merged task's docs edits | opens one docs PR |
+| `crew wrapup` | commits every merged task's docs edits | opens one docs PR, merged only when you ask |
 
 The loop, contracts and gates are identical in both modes.
 

@@ -11,6 +11,7 @@ description: Run a batch of this project's issues with a three-tier crew — thi
 /crew plan-only 3 5 8           # write + validate the plan and stop for review
 /crew rehearse <run-id>         # copy of the run as a dry run: real coder ↔ reviewer rounds, never merged
 /crew run <run-id>              # launch a saved plan
+/crew merge <run-id> [<id>…]    # github delivery: merge these ready PRs (all ready ones when no id is given)
 /crew status <run-id>           # task table + cost; changes nothing
 /crew cost <run-id>             # spend per task, role and model, with cache reads vs writes
 /crew stop <run-id>
@@ -64,7 +65,7 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
    - `batches/<batch>.json`: group by area or dependency chain. Use one batch by default; `max_parallel` is 2 by default.
    - `PLAN.md`: queue, dependency graph, batches, tiers with a one-line reason each, gaps, and decisions the user should confirm.
 3. `crew validate <run>` and fix every problem. Read the `!` warnings: a reviewer no stronger than its coder makes correlated mistakes. The default pair is a Haiku coder and a Sonnet reviewer; raise the coder to Sonnet when the contract leaves real decisions to it, and keep Opus reviewers for security, auth and data work.
-4. Show the queue, batches, tiers, decisions and gaps in one short message. Unless the user said `plan-only`, continue into **Run** in the same turn. Invoking `/crew` on issues authorizes the whole pipeline for the configured delivery: worktrees, commits, issue status updates, and either local merges into the base branch (`local`) or pushes, PRs, PR merges and a docs PR (`github`). It never authorizes deploying, publishing, or touching anything beyond that.
+4. Show the queue, batches, tiers, decisions and gaps in one short message. Unless the user said `plan-only`, continue into **Run** in the same turn. Invoking `/crew` on issues authorizes the whole pipeline for the configured delivery: worktrees, commits, issue status updates, and either local merges into the base branch (`local`) or pushes, PRs and a docs PR (`github`). With `github` delivery it does **not** authorize merging any PR: merge one only when the user explicitly asks for that merge (`/crew merge`, "merge 12", "merge them all"). It never authorizes deploying, publishing, or touching anything beyond that.
 
 `rehearse <run>`: copy the run to `<run>-rehearsal` with `"dry_run": true` in every batch, then run it. Drivers do real rounds but are never merged. Afterwards remove the rehearsal's worktrees and branches.
 
@@ -76,9 +77,11 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
    - **`ready_to_merge`** → `crew merge-check <run> <id>`, then read `<run>/reports/<id>.md` and the diff (`git diff <base>...<branch>`, or `gh pr diff <pr>` with github delivery).
      - Not eligible → it says why. Exit 3 means the base moved: `crew merge` records `rebase_needed`, and the driver merges the base in and re-runs every check.
      - Eligible → you decide, and you can only veto. Judge what the gates can't see: integration risk with what merged since, contract drift, the review notes, flaky evidence (re-run a suite if the report or coder mentions an unexplained failure).
-     - Approve with `crew merge <run> <id>`. It squash-merges into the base branch, with the report as the commit body, and updates the issue.
+     - Approve, `local`: `crew merge <run> <id>`. It squash-merges into the base branch, with the report as the commit body, and updates the issue.
+     - Approve, `github`: don't merge. Tell the user in one line that PR #n is ready, with your verdict and anything they should look at. Run `crew merge <run> <id>` only when they explicitly ask; it squash-merges the PR and updates the issue. If they merged it on GitHub themselves, `crew merge` just records it.
      - Veto with `crew event <run> retry|replanned|abandoned <id> '{"reason":"…"}'`.
      - Merge in PLAN order, and hold a task whose dependencies aren't merged.
+   - With `github` delivery, dependants wait until their dependencies' PRs are merged. When every remaining task is waiting on a PR merge, list the ready PRs, tell the user `/crew merge <run>` continues the run, and stop watching. On `/crew merge`, merge what they named (re-run `crew merge-check` first), then continue at Run step 2.
    - **`needs_replan`** (or your own veto because the contract was wrong) → fix only that contract: the `.md` and the `.json` together, `version` +1, and say in the `.md` what changed and that the branch already holds the old version. `crew validate`, then `crew event <run> replanned <id> '{"reason":"…"}'`. New product scope means `blocked`; tell the user.
    - **`escalate`** → decide: `retry`, `replanned`, `blocked` or `abandoned`. Ask the user only for product decisions.
    - **`blocked`** → tell the user in one line. Independent tasks continue.
@@ -90,7 +93,7 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
 
 ## Wrap-up
 
-1. `crew wrapup <run>` applies every merged contract's `docs` edits, runs `docsCheck`, and commits them on the base branch (`local`). With github delivery it does that on one branch, together with any queued issue-status changes, and opens a PR: wait for its CI (`gh pr checks <n> --watch`), then merge it. If an anchor no longer matches, fix it by hand (github: in the printed worktree, then `crew wrapup <run> --publish`).
+1. `crew wrapup <run>` applies every merged contract's `docs` edits, runs `docsCheck`, and commits them on the base branch (`local`). With github delivery it does that on one branch, together with any queued issue-status changes, and opens a PR: wait for its CI (`gh pr checks <n> --watch`) and report it. Merge it only when the user explicitly asks. If an anchor no longer matches, fix it by hand (github: in the printed worktree, then `crew wrapup <run> --publish`).
 2. Final table: `crew status <run>` (it includes cost) plus the merge commits (`git log --grep "Crew-Task: <run>/"`). List anything left open and why.
 
 ## resume / status / stop

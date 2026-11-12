@@ -19,7 +19,7 @@
 | stall/crash detection | deterministic | `orchestrator.mjs` (pid + start time + heartbeat) |
 | stall/crash diagnosis, environment repair | LLM | triage (`claude -p`) |
 | merge eligibility | deterministic | `crew merge-check` (local: branch tip, base, main folder; github: PR head, green checks, mergeability) |
-| final merge decision (veto only) | LLM | boss |
+| final merge decision (veto only; github: the user must also ask for the merge) | LLM | boss |
 | squash merge, issue status, docs | deterministic | `crew merge`, `crew wrapup` (github: through the PR, and one docs PR) |
 
 The boss can veto a merge that passed every gate, but can never override a failed gate: `crew merge` re-checks eligibility and refuses.

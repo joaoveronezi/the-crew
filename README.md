@@ -55,7 +55,7 @@ A **contract** is the unit of work. Its prose half is a spec for the agents: ste
 ## Works with your setup
 
 - **Issues from anywhere.** `issues.json`, an `issues/` folder, `issues.md` and GitHub Issues work as they are. For anything else (a `TODO.md`, a CSV, a tracker export), `/crew adapt` writes a small parser and proves it reads every issue.
-- **Local or PRs.** By default, approved work is squash-merged on your machine and nothing is pushed. With `"delivery": { "mode": "github" }`, each task becomes a PR that must pass CI before the crew merges it.
+- **Local or PRs.** By default, approved work is squash-merged on your machine and nothing is pushed. With `"delivery": { "mode": "github" }`, each task becomes a PR that must pass CI, and the crew merges it only when you ask (`/crew merge`).
 - **Any stack.** `/crew adapt` works out your test, lint and build commands, the services tests need, and the files that must never change in parallel.
 
 ## Quickstart

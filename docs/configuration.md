@@ -32,7 +32,7 @@ The crew writes back only an issue's status (`open` → `in_progress` → `done`
 
 ```jsonc
 { "delivery": { "mode": "local" } }                       // default: squash-merge on this machine
-{ "delivery": { "mode": "github", "remote": "origin" } }  // a PR per task, merged after green CI
+{ "delivery": { "mode": "github", "remote": "origin" } }  // a PR per task; merged only when you ask
 ```
 
 github mode needs `gh` authenticated and CI that runs on pull requests. See [delivery](how-it-works.md#delivery-local-or-pull-requests).
