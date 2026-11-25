@@ -34,7 +34,7 @@ The boss can veto a merge that passed every gate, but can never override a faile
 | `orch-<batch>.json` (driver processes, restarts, triages) | that batch's orchestrator |
 | `logs/<id>/` (driver.log, `r<k>-coder.jsonl`, `r<k>-reviewer.jsonl`, check logs, triage) | driver / orchestrator |
 | `reports/<id>.md` (summary, acceptance evidence, review notes, cost) | driver at hand-off; becomes the merge commit body |
-| `cost.jsonl` (append-only, one line per coder/reviewer/triage call: its own cost, tokens, cache reads and writes, session) | `lib.mjs callClaude` |
+| `cost.jsonl` (append-only, one line per coder/reviewer/triage call: its own cost, tokens, cache reads and writes, session) | `agents/index.mjs runAgent` |
 
 `batches/<batch>.json`: `{"tasks": ["A", "B"], "max_parallel": 2, "dry_run": false}`.
 

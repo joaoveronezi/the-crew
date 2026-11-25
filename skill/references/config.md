@@ -8,6 +8,7 @@ Written by `/crew adapt` and committed with the project. Every field is optional
   "branchPrefix": "crew/",
   "stateDir": ".claude/crew",
   "worktreeDir": ".worktrees",
+  "agents": { "coder": "claude:haiku", "reviewer": "claude:sonnet", "triage": "claude:sonnet" },
   "issues": { "file": "issues.json", "adapter": null, "writeBack": true },
   "locks": { "db": "the local Postgres used by integration tests" },
   "sensitivePaths": ["(^|/)package-lock\\.json$", "^db/migrations/", "^api/openapi\\.yaml$"],
@@ -26,6 +27,7 @@ Written by `/crew adapt` and committed with the project. Every field is optional
 | `branchPrefix` | Every task branch starts with it (`crew/<task>-<slug>`) |
 | `stateDir` | Runs, contracts, events, logs, reports, locks and the issue adapter live here. Gitignore `<stateDir>/runs` and `<stateDir>/locks`; commit the adapter if you have one |
 | `worktreeDir` | One git worktree per task. Gitignored |
+| `agents` | Who runs each role, as `"cli:model"`: `coder`, `reviewer`, `triage`. A bare model (`"sonnet"`) means `claude:` that model. Only `claude` (`haiku`, `sonnet`, `opus`) is supported so far; Codex and Gemini are planned. A role you leave out keeps its default, the backend's recommendation. A contract's `models` override `coder` and `reviewer` per task. `crew agents` prints what is available; `crew doctor` checks the CLIs are installed. The boss that writes the plan is your own Claude Code session, not configured here |
 | `issues.file` | The built-in format: `issues.json`, a folder like `issues/`, or `issues.md` (see [issues.md](issues.md)). With an adapter, the file the adapter reads. Tasks are never allowed to edit it |
 | `issues.adapter` | Path to a project adapter script for any other issue source (see `templates/issues-adapter.mjs`) |
 | `issues.github` | `true` (or `{ "repo": "owner/name" }`) to read GitHub Issues through `gh` instead of a file. Takes precedence over `file` and `adapter` (see [issues.md](issues.md#github-issues)) |

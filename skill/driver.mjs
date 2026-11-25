@@ -9,9 +9,11 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  API_RETRY_WAITS_MIN, CODER_RESUME, ROOT, apiRetryWait, appendEvent, sleep, baseRef, callClaude, cfg, gh, isGithub, tryGh, withTrailer, contractPath, fingerprint, formatFindings, git, identify, killGroup, loadContract, log, now,
+  API_RETRY_WAITS_MIN, CODER_RESUME, ROOT, apiRetryWait, appendEvent, sleep, baseRef, cfg, gh, isGithub, tryGh, withTrailer, contractPath, fingerprint, formatFindings, git, identify, killGroup, log, now,
   outOfScope, outputKey, readEvents, readJson, repeated, reviewProgress, retry, runDir, sandboxAvailable, sandboxedShell, shell, taskState, tryGit, withLocks, worktreeOf, writeJson,
 } from './lib.mjs';
+import { loadContract } from './contract.mjs';
+import { parseAgentSpec, runAgent } from './agents/index.mjs';
 
 const [run, id] = process.argv.slice(2);
 if (!run || !id) { console.error('usage: driver.mjs <run> <TASK-ID>'); process.exit(2); }
@@ -111,8 +113,8 @@ ${repair}`;
   // starts a fresh one, and so does the retry after a failed call.
   const resume = CODER_RESUME ? st.coder_session ?? null : null;
   log(`round ${st.round}: coder (${c.models.coder})${resume ? ' resumed' : ''}`);
-  const r = await withLocks(c.locks, id, () => callClaude({
-    role: 'coder', model: c.models.coder, prompt, budget: c.budget_usd.coder, timeoutMin: c.timeout_min.coder,
+  const r = await withLocks(c.locks, id, () => runAgent({
+    role: 'coder', agent: parseAgentSpec(c.models.coder), prompt, budget: c.budget_usd.coder, timeoutMin: c.timeout_min.coder,
     cwd: wt, logFile: join(logs, `r${st.round}-coder.jsonl`), onSpawn, resume, ledger: ledger(),
   }));
   save({ cost: st.cost + r.cost, coder_session: r.ok ? r.session : null });
@@ -180,7 +182,7 @@ ${checks || '- none'}
 ${previous}`;
   log(`round ${st.round}: reviewer (${c.models.reviewer})`);
   const before = head();
-  const r = await callClaude({ role: 'reviewer', model: c.models.reviewer, prompt, budget: c.budget_usd.reviewer, timeoutMin: c.timeout_min.reviewer, cwd: wt, logFile: join(logs, `r${st.round}-reviewer.jsonl`), onSpawn, ledger: ledger() });
+  const r = await runAgent({ role: 'reviewer', agent: parseAgentSpec(c.models.reviewer), prompt, budget: c.budget_usd.reviewer, timeoutMin: c.timeout_min.reviewer, cwd: wt, logFile: join(logs, `r${st.round}-reviewer.jsonl`), onSpawn, ledger: ledger() });
   save({ cost: st.cost + r.cost });
   if (head() !== before || git(wt, 'status', '--porcelain')) {
     git(wt, 'reset', '--hard', before); // the reviewer is read-only; undo anything it left

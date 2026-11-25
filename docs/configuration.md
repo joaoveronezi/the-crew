@@ -16,6 +16,16 @@
 
 Every field and its default: [config reference](../skill/references/config.md).
 
+## Agents
+
+```jsonc
+{ "agents": { "coder": "claude:haiku", "reviewer": "claude:sonnet", "triage": "claude:sonnet" } }  // the defaults
+```
+
+Each role is `"cli:model"`; a bare `"sonnet"` means `claude:sonnet`. A contract's `models` field overrides the coder and reviewer for that task and takes the same forms. `/crew adapt` asks you to pick them; `node .claude/skills/crew/crew.mjs agents` lists the backends, which are installed, and their models.
+
+Only the `claude` backend (`haiku`, `sonnet`, `opus`) is supported today. Codex and Gemini are planned, not available. The plan itself is written by your own Claude Code session, which the crew can't switch: use Opus for it, with `/model`.
+
 ## Issue sources
 
 ```jsonc

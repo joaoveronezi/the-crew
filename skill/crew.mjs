@@ -3,6 +3,7 @@
 //   node .claude/skills/crew/crew.mjs <command> [run] [...]
 //
 //   doctor                              check the machine, the repo and .claude/crew.config.json
+//   agents                              JSON: the agent backends, which are installed, their models, tiers and recommendations
 //   issues [--json] [--check]           every issue from the project's tracker, read deterministically
 //   validate <run>                      contract + batch checks; must pass before start
 //   start <run> [batch...]              mark the run's issues in progress, launch an orchestrator per batch
@@ -20,12 +21,14 @@ import { execFileSync, spawn } from 'node:child_process';
 import { join, relative } from 'node:path';
 import {
   CONFIG_FILE, DONE_FOR_DEPENDANTS, ROOT, SKILL, appendEvent, baseRef, cfg, gh, isGithub, tryGh, contractPath, git, isRunning, killGroup, lastStatus, loadBatch,
-  npmScriptsReferenced, orderingErrors, readCosts, readEvents, readJson, runDir, sandboxAvailable, shapeErrors, shell, sleep, sumCosts, tryGit, withDefaults, withTrailer, worktreeOf,
+  npmScriptsReferenced, orderingErrors, readCosts, readEvents, readJson, runDir, sandboxAvailable, shell, sleep, sumCosts, tryGit, withTrailer, worktreeOf,
 } from './lib.mjs';
+import { loadContract, shapeErrors } from './contract.mjs';
+import { REGISTRY, agentErrors, agentSpecError, agentSpecs, defaultAgents, describeBackends, detectedBackends, pairWarnings, parseAgentSpec } from './agents/index.mjs';
 import { issueErrors, issueTracker } from './issues.mjs';
 
 const [cmd, ...args] = process.argv.slice(2);
-const NO_RUN = new Set(['doctor', 'issues']);
+const NO_RUN = new Set(['doctor', 'agents', 'issues']);
 const run = NO_RUN.has(cmd) ? null : args[0];
 const rest = NO_RUN.has(cmd) ? args : args.slice(1);
 const die = (msg, code = 1) => { console.error(msg); process.exit(code); };
@@ -35,7 +38,7 @@ if (!cmd || (!run && !NO_RUN.has(cmd))) die(usage(), 2);
 const listJson = (dir) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)) : []);
 const batchIds = () => listJson(join(runDir(run), 'batches'));
 const taskIds = () => listJson(join(runDir(run), 'contracts'));
-const contract = (id) => withDefaults(readJson(contractPath(run, id)));
+const contract = (id) => loadContract(run, id);
 const atBase = (path) => tryGit(ROOT, 'cat-file', '-e', `${baseRef()}:${path}`).ok;
 // Raw file content on the base branch: not trimmed, so anchors that end with a newline still match.
 const showBase = (path) => {
@@ -48,7 +51,7 @@ const issuePaths = () => [cfg().issues.file, cfg().issues.adapter].filter(Boolea
 
 async function validate() {
   const config = cfg();
-  const errors = [];
+  const errors = [...agentErrors(config)];
   if (!sandboxAvailable()) errors.push('checks run in a sandbox, which needs macOS (sandbox-exec)');
   if (isGithub(config)) tryGit(ROOT, 'fetch', config.delivery.remote, config.baseBranch);
   const batches = Object.fromEntries(batchIds().map((b) => [b, loadBatch(run, b)]));
@@ -111,16 +114,9 @@ function unsandboxedWarnings() {
     .map((ch) => `${c.id}: check ${ch.id} runs outside the sandbox, with your rights (${ch.unsandboxed}); confirm with the user`));
 }
 function modelWarnings() {
-  const rank = { haiku: 0, sonnet: 1, opus: 2 };
   const security = new RegExp(cfg().securityPaths, 'i');
-  return taskIds().map(contract).flatMap((c) => {
-    const [coder, reviewer] = [rank[c.models?.coder], rank[c.models?.reviewer]];
-    if (reviewer < coder) return [`${c.id}: reviewer (${c.models.reviewer}) is weaker than the coder (${c.models.coder})`];
-    if (reviewer === coder) return [`${c.id}: coder and reviewer are both ${c.models.coder}; use a stronger reviewer for security, auth or data work`];
-    // An Opus review is usually the most expensive call in a run; the default reviewer is Sonnet.
-    if (c.models.reviewer === 'opus' && !c.allowed_files.some((f) => security.test(f.path))) return [`${c.id}: opus reviewer on files that don't look security, auth or data shaped (securityPaths); sonnet is the default`];
-    return [];
-  });
+  const installed = detectedBackends(); // once, not per task: it runs each CLI
+  return taskIds().map(contract).flatMap((c) => pairWarnings(c, security, { installed }));
 }
 
 const trailer = (id) => `Crew-Task: ${run}/${id}`;
@@ -251,12 +247,19 @@ const commands = {
     const [major] = process.versions.node.split('.').map(Number);
     ok(major >= 22, `node ${process.versions.node} (needs 22+)`);
     ok(true, `git repo at ${ROOT}`);
-    const claude = await shell('claude --version', { logFile: join(ROOT, '.git', 'crew-doctor.log'), timeoutMin: 1 });
-    ok(claude.code === 0, `claude CLI ${claude.out.split('\n')[0]}`);
+    // A backend that no agent uses may be missing; it is only listed.
+    const installed = Object.fromEntries(Object.values(REGISTRY).map((p) => [p.id, p.detect()]));
+    for (const [id, found] of Object.entries(installed)) lines.push(`${found ? '✓' : '·'} agent backend ${id}: ${found ? 'CLI found' : 'CLI not found'}`);
     ok(sandboxAvailable(), `check sandbox (sandbox-exec)${sandboxAvailable() ? '' : ': needs macOS'}`);
     if (!existsSync(CONFIG_FILE)) { ok(false, `${relative(ROOT, CONFIG_FILE)} missing: run "/crew adapt"`); return console.log(lines.join('\n')); }
     const config = cfg();
     ok(true, `config ${relative(ROOT, CONFIG_FILE)}`);
+    for (const e of agentErrors(config)) ok(false, e);
+    for (const [role, spec] of Object.entries(agentSpecs(config))) {
+      if (agentSpecError(spec, role)) continue; // reported above
+      const { cli } = parseAgentSpec(spec);
+      ok(installed[cli], `${role} agent ${spec}: ${cli} CLI ${installed[cli] ? 'found' : 'not found'}`);
+    }
     if (isGithub(config)) {
       const { remote } = config.delivery;
       ok(tryGit(ROOT, 'remote', 'get-url', remote).ok, `remote ${remote} exists`);
@@ -277,6 +280,11 @@ const commands = {
     for (const [name, what] of Object.entries(config.locks)) lines.push(`· lock ${name}: ${what}`);
     console.log(lines.join('\n'));
     if (lines.some((l) => l.startsWith('✗'))) process.exit(1);
+  },
+
+  // Read by /crew adapt to build its menus; the config is optional because adapt runs before it exists.
+  agents() {
+    console.log(JSON.stringify({ backends: describeBackends(), defaults: defaultAgents(), configured: existsSync(CONFIG_FILE) ? agentSpecs(cfg()) : null }, null, 2));
   },
 
   async issues() {

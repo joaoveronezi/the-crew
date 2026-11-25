@@ -22,7 +22,7 @@ rm -rf "$dest"
 mkdir -p "$(dirname "$dest")"
 cp -R "$src" "$dest"
 echo "Installed the crew skill in $dest"
-echo "Next: open Claude Code in the project and run /crew adapt"
+echo "Next: open Claude Code in the project and run /crew adapt: it checks the machine, picks the coder, reviewer and triage agents with you, and writes .claude/crew.config.json"
 
 if [ -n "${repo:-}" ]; then
   missing=()

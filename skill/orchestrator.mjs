@@ -8,9 +8,11 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:f
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import {
-  DONE_FOR_DEPENDANTS, FINISHED, ROOT, RUNNABLE, SKILL, WAITING_ON_BOSS, apiRetryWait, appendEvent, callClaude, contractPath,
-  identify, isRunning, killGroup, lastStatus, loadBatch, loadContract, log, now, readEvents, readJson, runDir, sleep, tail, worktreeOf, writeJson,
+  DONE_FOR_DEPENDANTS, FINISHED, ROOT, RUNNABLE, SKILL, WAITING_ON_BOSS, apiRetryWait, appendEvent, cfg, contractPath,
+  identify, isRunning, killGroup, lastStatus, loadBatch, log, now, readEvents, readJson, runDir, sleep, tail, worktreeOf, writeJson,
 } from './lib.mjs';
+import { loadContract } from './contract.mjs';
+import { agentSpecs, parseAgentSpec, runAgent } from './agents/index.mjs';
 
 const [run, batchId] = process.argv.slice(2);
 if (!run || !batchId) { console.error('usage: orchestrator.mjs <run> <batch>'); process.exit(2); }
@@ -79,8 +81,8 @@ Contract: ${contractPath(run, id)} (locks: ${c.locks.join(', ') || 'none'})`;
     // An unreachable API isn't a diagnosis: wait it out like the driver does instead of escalating to the boss.
     let r;
     for (let attempt = 0; ; attempt++) {
-      r = await callClaude({
-        role: 'triage', model: 'sonnet', prompt, budget: c.budget_usd.triage, timeoutMin: 20, cwd: ROOT,
+      r = await runAgent({
+        role: 'triage', agent: parseAgentSpec(agentSpecs(cfg()).triage), prompt, budget: c.budget_usd.triage, timeoutMin: 20, cwd: ROOT,
         logFile: join(runDir(run), 'logs', id, `triage-${d.triages}${attempt ? `-retry${attempt}` : ''}.jsonl`), ledger: { run, task: id, round: null, version: c.version },
       });
       const wait = r.transient ? apiRetryWait(attempt) : null;

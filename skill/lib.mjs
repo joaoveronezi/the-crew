@@ -1,8 +1,9 @@
 // Shared crew plumbing: project config, paths, process control, the event log and its state machine, contracts,
-// locks and `claude -p` calls. Everything here is deterministic; judgment lives only in prompts/ and the boss.
+// locks and process helpers. Everything here is deterministic; judgment lives only in prompts/ and the boss. The agent
+// CLIs (`claude -p`, …) live behind agents/.
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -188,54 +189,8 @@ export function appendEvent(run, type, task, data = {}, by = 'boss') {
 // Contracts: `contracts/<id>.json` is the machine half of a contract (the `.md` beside it is the prose the coder and
 // reviewer read). See references/contract-json.md.
 
-export const MODELS = ['haiku', 'sonnet', 'opus'];
-export const DEFAULTS = {
-  depends_on: [], setup: [], checks: [], gates: [], locks: [], docs: [], max_rounds: 3,
-  close_issue: true, manual_acceptance: null,
-  models: { coder: 'haiku', reviewer: 'sonnet' },
-  budget_usd: { coder: 5, reviewer: 2, triage: 1 },
-  timeout_min: { setup: 20, coder: 45, reviewer: 20, checks: 30, ci: 45 },
-};
-export function withDefaults(raw) {
-  const c = { ...DEFAULTS, ...raw };
-  c.models = { ...DEFAULTS.models, ...raw.models };
-  c.budget_usd = { ...DEFAULTS.budget_usd, ...raw.budget_usd };
-  c.timeout_min = { ...DEFAULTS.timeout_min, ...raw.timeout_min };
-  c.checks = c.checks.map((ch) => ({ locks: [], ...ch }));
-  // Manual acceptance or close_issue: false keeps the issue open after the merge (state needs_human).
-  c.keep_open = Boolean(c.manual_acceptance) || c.close_issue === false;
-  return c;
-}
 export const contractPath = (run, id, ext = 'json') => join(runDir(run), 'contracts', `${id}.${ext}`);
-export const loadContract = (run, id) => withDefaults(readJson(contractPath(run, id)));
 export const loadBatch = (run, batch) => ({ max_parallel: 2, dry_run: false, ...readJson(join(runDir(run), 'batches', `${batch}.json`)) });
-
-// Pure shape check of one contract; returns error strings.
-export function shapeErrors(c, { dryRun = false, branchPrefix = CONFIG_DEFAULTS.branchPrefix, lockNames = [] } = {}) {
-  const errors = [];
-  const need = (ok, msg) => { if (!ok) errors.push(`${c.id ?? '?'}: ${msg}`); };
-  const str = (v) => typeof v === 'string' && v.trim() !== '';
-  const prefix = branchPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  need(str(c.id) && /^[A-Za-z0-9._-]+$/.test(c.id), 'id must be letters, digits, dot, dash or underscore');
-  need(Number.isInteger(c.version) && c.version >= 1, 'version must be an integer ≥ 1');
-  need(str(String(c.issue ?? '')) || dryRun, 'issue must name an issue id from the project issue file');
-  for (const k of ['title', 'batch', 'commit', 'summary']) need(str(c[k]), `${k} missing`);
-  need(str(c.branch) && new RegExp(`^${prefix}[A-Za-z0-9._/-]+$`).test(c.branch), `branch must start with ${branchPrefix}`);
-  need(MODELS.includes(c.models?.coder) && MODELS.includes(c.models?.reviewer), `models.coder/reviewer must be one of ${MODELS}`);
-  need(Array.isArray(c.allowed_files) && c.allowed_files.length > 0, 'allowed_files is empty');
-  for (const f of c.allowed_files ?? []) need(str(f.path) && ['edit', 'create', 'delete'].includes(f.op), `bad allowed_files entry ${JSON.stringify(f)}`);
-  for (const ch of c.checks) need(str(ch.id) && str(ch.cmd) && Number.isInteger(ch.expect_exit), `bad check ${JSON.stringify(ch)}`);
-  for (const ch of c.checks) need(ch.unsandboxed === undefined || str(ch.unsandboxed), `check ${ch.id}: unsandboxed must say why the check can't run in the sandbox`);
-  need(c.checks.length + c.gates.length > 0, 'no checks or gates: nothing deterministic proves the change');
-  for (const g of [...c.gates, ...c.setup]) need(str(g), 'empty gate/setup command');
-  for (const l of [...c.locks, ...c.checks.flatMap((ch) => ch.locks)]) need(lockNames.includes(l), `unknown lock ${l} (declare it in crew.config.json "locks")`);
-  need(Number.isInteger(c.max_rounds) && c.max_rounds >= 1 && c.max_rounds <= 5, 'max_rounds must be 1–5');
-  for (const [k, v] of Object.entries(c.budget_usd)) need(typeof v === 'number' && v > 0, `budget_usd.${k} must be > 0`);
-  for (const [k, v] of Object.entries(c.timeout_min)) need(typeof v === 'number' && v > 0, `timeout_min.${k} must be > 0`);
-  need(typeof c.close_issue === 'boolean', 'close_issue must be true or false');
-  for (const d of c.docs) need(str(d.file) && str(d.find) && typeof d.replace === 'string', `bad docs entry for ${d.file}`);
-  return errors;
-}
 
 // Tasks whose files overlap, or that both touch the same sensitive area (a lockfile, migrations, an API spec: the
 // config's sensitivePaths), must be ordered by depends_on; otherwise two drivers would race on the same lines.
@@ -366,7 +321,7 @@ export async function withLocks(names, holder, fn) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// `claude -p` with a role prompt and a JSON schema. `--agent` is not used: it drops structured output.
+// Agent output schemas: what each role must return. Backend-neutral; every backend in agents/ is handed the schema for its role.
 
 export const SCHEMAS = {
   coder: {
@@ -412,47 +367,9 @@ export const SCHEMAS = {
     },
   },
 };
-const GIT_WRITES = ['commit', 'push', 'reset', 'checkout', 'switch', 'rebase', 'merge', 'stash', 'clean', 'restore', 'worktree', 'branch', 'tag'];
-export const ROLE_TOOLS = {
-  // No role may use gh to act on the remote: pushes, PRs and issue updates belong to the driver and `crew merge`.
-  coder: { tools: ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob'], disallowed: [...GIT_WRITES.filter((c) => c !== 'restore').map((c) => `Bash(git ${c} *)`), 'Bash(gh *)'] },
-  reviewer: { tools: ['Read', 'Bash', 'Grep', 'Glob'], disallowed: [...[...GIT_WRITES, 'add', 'rm', 'mv', 'apply'].map((c) => `Bash(git ${c} *)`), 'Bash(gh *)'] },
-  triage: { tools: ['Read', 'Bash', 'Grep', 'Glob'], disallowed: [...[...GIT_WRITES, 'add', 'rm'].map((c) => `Bash(git ${c} *)`), 'Bash(gh pr *)', 'Bash(gh issue *)', 'Bash(gh api *)', 'Bash(gh repo *)'] },
-};
 
-// OS sandbox for coder and reviewer (Claude Code `sandbox` settings, passed per call with --settings). Bash and
-// everything it spawns may write only to the worktree, its git admin dir, temp and caches, may not read credentials,
-// and may reach only the config's allowed domains and localhost. It fails closed: no unsandboxed fallback, and no run
-// at all when the sandbox is unavailable. Read/Edit/Write are not sandboxed by the OS, so permission deny rules
-// cover them: no secrets, and no edits to the main checkout (including the crew's own state) or home dotfiles.
-const HOME_SECRETS = ['.ssh', '.aws', '.gnupg', '.config/gh', '.netrc', '.npmrc', '.docker', '.kube', '.azure', '.config/gcloud'];
-export function sandboxSettings(worktree, config = cfg()) {
-  const home = homedir();
-  const gitDir = git(worktree, 'rev-parse', '--path-format=absolute', '--git-dir');
-  // Every top-level entry of the main checkout except the worktree folder is protected. Entries are listed rather
-  // than globbed: a gitignore-style `*` would also match the worktree folder and everything in it.
-  const worktreeTop = config.worktreeDir.split('/')[0];
-  const mainEntries = readdirSync(ROOT).filter((e) => e !== worktreeTop);
-  return {
-    sandbox: {
-      enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false, failIfUnavailable: true,
-      filesystem: {
-        allowWrite: [worktree, gitDir, tmpdir(), '/tmp', '/private/tmp', join(home, '.npm'), join(home, '.cache'), join(home, 'Library/Caches')],
-        denyRead: [...HOME_SECRETS.map((p) => join(home, p)), ...config.secretFiles.filter((f) => !/[*?]/.test(f)).map((f) => join(ROOT, f))],
-      },
-      network: { allowedDomains: config.network.allowedDomains, allowLocalBinding: true, strictAllowlist: true },
-    },
-    permissions: {
-      deny: [
-        ...HOME_SECRETS.flatMap((p) => [`Read(~/${p})`, `Read(~/${p}/**)`]),
-        ...config.secretFiles.map((f) => `Read(/${ROOT}/**/${f})`),
-        ...mainEntries.flatMap((e) => [`Edit(/${ROOT}/${e})`, `Edit(/${ROOT}/${e}/**)`]),
-        'Edit(~/.*)', 'Edit(~/.*/**)',
-      ],
-    },
-  };
-}
-
+// Home folders with credentials: denied to every sandbox, the agents' (agents/) and the checks' (below).
+export const HOME_SECRETS = ['.ssh', '.aws', '.gnupg', '.config/gh', '.netrc', '.npmrc', '.docker', '.kube', '.azure', '.config/gcloud'];
 // Checks and gates execute code the coder wrote (setup runs before the coder starts, on the base branch's code, so it
 // runs as you, like your own `npm ci`), so by default they run in macOS's built-in sandbox (sandbox-exec:
 // nothing to install). The profile starts from "allow" and denies what matters, each rule tested on 2026-11-12:
@@ -520,40 +437,11 @@ export function sandboxedShell(command, { worktree, config = cfg(), ...opts }) {
   return run(SANDBOX_EXEC, ['-f', profile, 'bash', '-c', command], { ...opts, baseEnv: withoutCredentials(process.env) });
 }
 
-export function lastResult(logFile) {
-  if (!existsSync(logFile)) return null;
-  const lines = readFileSync(logFile, 'utf8').trim().split('\n').reverse();
-  for (const l of lines) {
-    try { const m = JSON.parse(l); if (m.type === 'result') return m; } catch {}
-  }
-  return null;
-}
-
-// Prompt caching. The cache reuses only an identical prefix (tools → system prompt → messages), so:
-// - the shared prefix moves the per-machine system-prompt sections (cwd, git status) into the first message, letting
-//   every call of one role and model share the cached system prompt instead of each worktree writing its own;
-// - the 1-hour TTL keeps that prefix, and a resumed coder's history, alive across checks, e2e and CI waits;
-// - coder resume continues the task's coder session between rounds, so its context is read back, not rewritten.
-// Measured 2026-11-05: a second call from another directory read 3.1k cached tokens instead of rewriting 4.7k, and a
-// resumed call wrote 0.7k. Each switch can be turned off for a run with its env var set to 0.
-const SHARED_PREFIX = process.env.CREW_SHARED_PREFIX !== '0';
-const CACHE_1H = process.env.CREW_CACHE_1H !== '0';
+// Coder session resume (CREW_CODER_RESUME=0 turns it off): the driver continues a coder's session across the rounds of one
+// contract version when its backend can, so the context is read from the cache instead of rewritten.
 export const CODER_RESUME = process.env.CREW_CODER_RESUME !== '0';
 
-// Tokens of one `claude -p` call, all models included (modelUsage covers the whole call; `usage` only its last turn).
-export function callUsage(result) {
-  const sum = { input: 0, output: 0, cache_write: 0, cache_write_1h: 0, cache_read: 0 };
-  for (const m of Object.values(result?.modelUsage ?? {})) {
-    sum.input += m.inputTokens ?? 0;
-    sum.output += m.outputTokens ?? 0;
-    sum.cache_write += m.cacheCreationInputTokens ?? 0;
-    sum.cache_write_1h += m.cacheCreationEphemeral1hInputTokens ?? 0;
-    sum.cache_read += m.cacheReadInputTokens ?? 0;
-  }
-  return sum;
-}
-
-// `cost.jsonl`: one line per `claude -p` call (coder, reviewer, triage), append-only, so replans and restarts never
+// `cost.jsonl`: one line per agent call (coder, reviewer, triage), append-only, so replans and restarts never
 // lose spend. `crew status`, `crew cost` and the dashboard read it.
 const costFile = (run) => join(runDir(run), 'cost.jsonl');
 export function recordCost(run, entry) {
@@ -578,53 +466,7 @@ export function sumCosts(entries, keyOf) {
   return out;
 }
 
-// A resumed session reports cost and tokens for the whole session so far (measured 2026-11-05), so a call's own share
-// is the difference from that session's last ledger entry.
-export function callShare(total, prior) {
-  if (!prior) return total;
-  const tokens = Object.fromEntries(Object.entries(total.tokens).map(([k, v]) => [k, Math.max(0, v - (prior.tokens?.[k] ?? 0))]));
-  return { cost: Math.max(0, total.cost - prior.cost), tokens };
-}
-
-// The CLI reports an unreachable, overloaded or rate-limited API as a result with `api_error` set (and, measured
-// 2026-11-12, subtype "success"), so it used to read as "no structured output". Only these pass on their own; any
-// other api_error (authentication, billing, a bad request) is a real failure and is never waited out.
-export const TRANSIENT_API_ERRORS = new Set(['connection_failed', 'server_error', 'overloaded', 'rate_limit']);
-export function callFailure(result, timedOut) {
-  if (result?.structured_output && !result.is_error) return { failure: null, transient: false };
-  if (timedOut) return { failure: 'timeout', transient: false };
-  const apiError = result?.api_error ?? null;
-  if (apiError) return { failure: `api error: ${apiError}`, transient: TRANSIENT_API_ERRORS.has(apiError) };
-  if (result?.subtype && result.subtype !== 'success') return { failure: result.subtype, transient: false };
-  return { failure: 'no structured output', transient: false };
-}
-
 // Waits before calling again after a transient API failure: about two hours in all, so a dropped connection or an
 // overloaded API is ridden out unattended (one stalled a run overnight on 2026-11-11). null: stop waiting.
 export const API_RETRY_WAITS_MIN = [1, 2, 5, 10, 20, 30, 60];
 export const apiRetryWait = (attempt) => (attempt < API_RETRY_WAITS_MIN.length ? API_RETRY_WAITS_MIN[attempt] * 60_000 : null);
-
-export async function callClaude({ role, model, prompt, budget, timeoutMin, cwd, logFile, onSpawn, resume = null, ledger = null }) {
-  if (resume && !ledger) throw new Error('a resumed call needs the ledger to separate its cost from the session total');
-  const { tools, disallowed } = ROLE_TOOLS[role];
-  const prior = resume ? readCosts(ledger.run).findLast((e) => e.session === resume)?.session_total ?? null : null;
-  // The cap stays per call even if the CLI applies it to the session total.
-  const cap = budget + (prior?.cost ?? 0);
-  // --strict-mcp-config with no --mcp-config: no MCP servers, so the role sees only the tools listed here.
-  const args = ['-p', '--model', model, '--permission-mode', 'auto', '--max-budget-usd', String(cap), '--strict-mcp-config',
-    '--append-system-prompt-file', join(SKILL, 'prompts', `${role}.md`),
-    '--output-format', 'stream-json', '--verbose', '--json-schema', JSON.stringify(SCHEMAS[role]),
-    '--tools', tools.join(','), '--disallowedTools', disallowed.join(','),
-    ...(SHARED_PREFIX ? ['--exclude-dynamic-system-prompt-sections'] : []),
-    ...(resume ? ['--resume', resume] : []),
-    ...(role === 'triage' ? [] : ['--settings', JSON.stringify(sandboxSettings(cwd))])];
-  const env = CACHE_1H ? { ENABLE_PROMPT_CACHING_1H: '1' } : undefined;
-  const r = await run('claude', args, { cwd, input: prompt, logFile, timeoutMin, onSpawn, env });
-  const result = lastResult(logFile);
-  const output = result?.structured_output ?? null;
-  const total = { cost: result?.total_cost_usd ?? 0, tokens: callUsage(result) };
-  const { cost, tokens } = callShare(total, prior);
-  if (ledger) recordCost(ledger.run, { ...ledger, role, model, resumed: Boolean(resume), session: result?.session_id ?? null, cost, tokens, session_total: total });
-  const { failure, transient } = callFailure(result, r.timedOut);
-  return { ok: failure === null, output, cost, session: result?.session_id ?? null, failure, transient };
-}

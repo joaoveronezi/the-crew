@@ -6,7 +6,7 @@ description: Run a batch of this project's issues with a three-tier crew — thi
 # Crew
 
 ```text
-/crew adapt                     # first time in a project: write .claude/crew.config.json + the issue reader
+/crew adapt                     # first time in a project: choose the agents, write .claude/crew.config.json + the issue reader
 /crew 3 5 8                     # plan these issues, validate, launch, run to the end
 /crew plan-only 3 5 8           # write + validate the plan and stop for review
 /crew rehearse <run-id>         # copy of the run as a dry run: real coder ↔ reviewer rounds, never merged
@@ -51,8 +51,9 @@ Goal: a `.claude/crew.config.json` that is true for this project, and a way to r
    - `crew issues --check` must pass: ids unique, titles present, statuses known, dependencies resolvable.
    - `crew issues` must list the same issues you see in the file. Compare the count and a few ids, titles and statuses by hand.
    - If you wrote an adapter, also test `updateIssue` on a copy of the file: status and note only, nothing else changed (`git diff`). Then restore it.
-4. **Write the config** from [config.md](references/config.md), and add `<stateDir>/runs/`, `<stateDir>/locks/` and `<worktreeDir>/` to `.gitignore`. The adapter, if any, stays tracked.
-5. `crew doctor` must pass. Then tell the user, in a few lines, what you configured and what you assumed (base branch, the issue source and how it is read, locks, sensitive paths, network). Ask them to confirm anything you guessed.
+4. **Choose the agents.** `crew agents` prints the backends, which are installed, and each one's models with tiers and recommendations. Ask the user with the AskUserQuestion tool (arrow-key menus, at most 4 options per question, the recommended option first and labelled "(Recommended)"), one question each for the coder, reviewer and triage agent. Offer only models of installed backends. Recommend a reviewer from a different cli than the coder when one is installed (a different model family catches correlated mistakes); with only `claude`, recommend the defaults. Also tell the user that their own session writes the plan, so Opus is the best choice for planning: they switch with `/model`, the crew can't set it.
+5. **Write the config** from [config.md](references/config.md), with their choices under `agents`, and add `<stateDir>/runs/`, `<stateDir>/locks/` and `<worktreeDir>/` to `.gitignore`. The adapter, if any, stays tracked.
+6. `crew doctor` must pass. Then tell the user, in a few lines, what you configured and what you assumed (base branch, the issue source and how it is read, locks, sensitive paths, network). Ask them to confirm anything you guessed.
 
 The adapter and config are project files: commit them (`chore: adapt crew`) once the user agrees.
 
@@ -64,7 +65,7 @@ The adapter and config are project files: commit them (`chore: adapt crew`) once
    - `contracts/<id>.json`: from [contract-json.md](references/contract-json.md). Every command-provable AC goes in `checks`. Checks and gates run in a sandbox with localhost but no internet. Mark a check `"unsandboxed": "<why>"` only when it can't work there (a simulator, a real browser, Docker, the internet). Prefer a sandboxed check that proves the same thing. Docs edits go in `docs` with exact `find` anchors. `issue` is the tracker's id.
    - `batches/<batch>.json`: group by area or dependency chain. Use one batch by default; `max_parallel` is 2 by default.
    - `PLAN.md`: queue, dependency graph, batches, tiers with a one-line reason each, gaps, and decisions the user should confirm.
-3. `crew validate <run>` and fix every problem. Every `unsandboxed` check is a `!` warning. List each one, with its reason, under the decisions the user must confirm, and don't start until they agree. Their answer authorizes that check only. Also read the model warnings: a reviewer no stronger than its coder makes correlated mistakes. The default pair is a Haiku coder and a Sonnet reviewer; raise the coder to Sonnet when the contract leaves real decisions to it, and keep Opus reviewers for security, auth and data work.
+3. `crew validate <run>` and fix every problem. Every `unsandboxed` check is a `!` warning. List each one, with its reason, under the decisions the user must confirm, and don't start until they agree. Their answer authorizes that check only. Also read the model warnings: a reviewer no stronger than its coder, or from the same backend as it when another installed one could review, makes correlated mistakes. A task's `models` override the config's `agents`. The default pair is a Haiku coder and a Sonnet reviewer; raise the coder to Sonnet when the contract leaves real decisions to it, and keep Opus reviewers for security, auth and data work.
 4. Show the queue, batches, tiers, decisions and gaps in one short message. Unless the user said `plan-only`, continue into **Run** in the same turn. Invoking `/crew` on issues authorizes the whole pipeline for the configured delivery: worktrees, commits, issue status updates, and either local merges into the base branch (`local`) or pushes, PRs and a docs PR (`github`). With `github` delivery it does **not** authorize merging any PR: merge one only when the user explicitly asks for that merge (`/crew merge`, "merge 12", "merge them all"). It never authorizes deploying, publishing, or touching anything beyond that.
 
 `rehearse <run>`: copy the run to `<run>-rehearsal` with `"dry_run": true` in every batch, then run it. Drivers do real rounds but are never merged. Afterwards remove the rehearsal's worktrees and branches.

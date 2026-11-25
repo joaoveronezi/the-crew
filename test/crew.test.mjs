@@ -6,9 +6,14 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   checkTransition, fingerprint, identify, isRunning, npmScriptsReferenced, orderingErrors, outOfScope, outputKey, repeated,
-  reviewProgress, sandboxSettings, shapeErrors, taskState, withConfigDefaults, withDefaults, withTrailer, ROOT, callShare, callUsage, sumCosts, baseRef, isGithub, ROLE_TOOLS,
-  apiRetryWait, callFailure, API_RETRY_WAITS_MIN, checkProfile, sandboxAvailable, sandboxedShell, withoutCredentials,
+  reviewProgress, taskState, withConfigDefaults, withTrailer, ROOT, sumCosts, baseRef, isGithub,
+  apiRetryWait, API_RETRY_WAITS_MIN, checkProfile, sandboxAvailable, sandboxedShell, withoutCredentials,
 } from '../skill/lib.mjs';
+import { shapeErrors, withDefaults } from '../skill/contract.mjs';
+import {
+  REGISTRY, agentErrors, agentSpecError, agentSpecs, defaultAgents, describeBackends, detectedBackends, ledgerEntry, pairWarnings, parseAgentSpec, runAgent,
+} from '../skill/agents/index.mjs';
+import { ROLE_TOOLS, callFailure, callShare, callUsage, sandboxSettings } from '../skill/agents/claude.mjs';
 import {
   issueErrors, normalizeIssue, parseFrontMatter, parseJsonIssues, parseMdIssues, updateFrontMatterIssue, updateJsonIssues, updateMdIssue,
 } from '../skill/issues.mjs';
@@ -213,8 +218,8 @@ test('commits carry no trailer unless the project configures one', () => {
 });
 
 test('models default to a haiku coder and a sonnet reviewer, and either can be overridden', () => {
-  assert.deepEqual(withDefaults({ id: 'T' }).models, { coder: 'haiku', reviewer: 'sonnet' });
-  assert.deepEqual(withDefaults({ id: 'T', models: { reviewer: 'opus' } }).models, { coder: 'haiku', reviewer: 'opus' });
+  assert.deepEqual(withDefaults({ id: 'T' }).models, { coder: 'claude:haiku', reviewer: 'claude:sonnet' });
+  assert.deepEqual(withDefaults({ id: 'T', models: { reviewer: 'opus' } }).models, { coder: 'claude:haiku', reviewer: 'opus' });
 });
 
 test('call usage sums every model in the call; a missing result is all zeros', () => {
@@ -328,4 +333,123 @@ test('the example run and configs in examples/ are valid', async () => {
   const issues = parseJsonIssues(readFileSync(new URL('../examples/local/issues.json', import.meta.url), 'utf8')).map(normalizeIssue);
   assert.deepEqual(issueErrors(issues), []);
   assert.ok(issues.some((i) => i.id === raw.issue));
+});
+
+// A fake backend: nothing is spawned. `calls` records what runAgent handed it.
+const fakeBackend = (id, { models = [{ id: 'small', tier: 0 }, { id: 'big', tier: 1 }], installed = true, result = {}, ...extra } = {}) => {
+  const calls = [];
+  const profile = {
+    id, roles: ['coder', 'reviewer', 'triage'], models, recommended: { coder: models[0].id, reviewer: models.at(-1).id, triage: models.at(-1).id },
+    detect: () => installed, call: async (opts) => { calls.push(opts); return { ok: true, output: { status: 'implemented' }, cost: 0.25, session: 's1', failure: null, transient: false, tokens: { input: 1 }, session_total: { cost: 0.25 }, ...result }; },
+    ...extra,
+  };
+  return { profile, calls };
+};
+
+test('an agent is cli:model, a bare model is a claude model, and anything unknown is refused with the way out', () => {
+  assert.deepEqual(parseAgentSpec('claude:haiku'), { cli: 'claude', model: 'haiku' });
+  assert.deepEqual(parseAgentSpec('opus'), { cli: 'claude', model: 'opus' });
+  assert.throws(() => parseAgentSpec('codex:gpt-5-codex'), /unknown agent cli "codex" \(available: claude\)/);
+  assert.throws(() => parseAgentSpec('claude:gpt-5'), /unknown model "gpt-5" for claude \(available: haiku, sonnet, opus/);
+  assert.throws(() => parseAgentSpec('gpt-5'), /unknown model "gpt-5" for claude.*"cli:model" picks another backend/);
+  for (const bad of ['', '  ', null, undefined, 3, 'claude:', ':haiku', '__proto__:x', 'constructor:x']) assert.throws(() => parseAgentSpec(bad), Error, String(bad));
+  // the model after the first colon is kept whole, and a backend can opt into free-form model ids
+  const { profile } = fakeBackend('open', { freeFormModels: true });
+  const registry = { open: profile };
+  assert.deepEqual(parseAgentSpec('open:llama3:8b', registry), { cli: 'open', model: 'llama3:8b' });
+  assert.throws(() => parseAgentSpec('open:x; rm -rf ~', registry), /bad model id/);
+  assert.throws(() => parseAgentSpec('open:', registry), /bad model id/);
+});
+
+test('agents default to the registry\'s recommendations, and the config overrides one role at a time', () => {
+  assert.deepEqual(defaultAgents(), { coder: 'claude:haiku', reviewer: 'claude:sonnet', triage: 'claude:sonnet' });
+  assert.deepEqual(agentSpecs({}), defaultAgents());
+  assert.deepEqual(agentSpecs({ agents: { reviewer: 'opus' } }), { coder: 'claude:haiku', reviewer: 'opus', triage: 'claude:sonnet' });
+  assert.deepEqual(agentErrors({}), []);
+  assert.deepEqual(agentErrors({ agents: { coder: 'claude:haiku', reviewer: 'sonnet' } }), []);
+  const errors = agentErrors({ agents: { coder: 'codex:x', reviewer: 'gpt', planner: 'opus' } });
+  for (const re of [/agents\.coder: unknown agent cli "codex"/, /agents\.reviewer: unknown model "gpt"/, /agents\.planner: unknown role/]) assert.ok(errors.some((e) => re.test(e)), String(re));
+  assert.match(agentErrors({ agents: 'opus' })[0], /must be an object/);
+});
+
+test('a contract\'s models override the config per task, accept cli:model, and are validated against the registry', () => {
+  const agents = { coder: 'claude:sonnet', reviewer: 'claude:opus', triage: 'claude:sonnet' };
+  assert.deepEqual(withDefaults({ id: 'T' }, agents).models, { coder: 'claude:sonnet', reviewer: 'claude:opus' });
+  assert.deepEqual(withDefaults({ id: 'T', models: { coder: 'haiku' } }, agents).models, { coder: 'haiku', reviewer: 'claude:opus' });
+  assert.deepEqual(shapeErrors(contract({ models: { coder: 'claude:haiku', reviewer: 'sonnet' } })), []);
+  const errors = shapeErrors(contract({ models: { coder: 'codex:gpt-5-codex', reviewer: 'gpt-5', triage: 'sonnet' } }));
+  for (const re of [/models\.coder: unknown agent cli "codex"/, /models\.reviewer: unknown model "gpt-5"/, /models takes only coder and reviewer/]) assert.ok(errors.some((e) => re.test(e)), String(re));
+  // a registered backend makes its specs valid
+  const { profile } = fakeBackend('codex');
+  assert.deepEqual(shapeErrors(contract({ models: { coder: 'claude:haiku', reviewer: 'codex:big' } }), { registry: { ...REGISTRY, codex: profile } }), []);
+  assert.match(agentSpecError('codex:big', 'coder', { codex: { ...profile, roles: ['reviewer'] } }), /codex can't run the coder role/);
+});
+
+test('model warnings rank by tier, only inside one backend, and stay silent about families with one backend', () => {
+  const security = /auth/i;
+  const c = (coder, reviewer, file = 'src/auth/login.ts') => ({ id: 'T', models: { coder, reviewer }, allowed_files: [{ path: file, op: 'edit' }] });
+  assert.deepEqual(pairWarnings(c('claude:haiku', 'claude:sonnet'), security), [], 'the default pair is quiet');
+  assert.match(pairWarnings(c('sonnet', 'haiku'), security)[0], /reviewer \(claude:haiku\) is weaker than the coder \(claude:sonnet\)/);
+  assert.match(pairWarnings(c('sonnet', 'claude:sonnet'), security)[0], /both claude:sonnet/);
+  assert.match(pairWarnings(c('haiku', 'opus', 'src/ui/button.ts'), security)[0], /claude:opus reviewer on files that don't look security.*sonnet is the default/);
+  assert.deepEqual(pairWarnings(c('haiku', 'opus'), security), [], 'opus on security-shaped files is what it is for');
+
+  const small = fakeBackend('small-cli', { models: [{ id: 'a', tier: 0 }, { id: 'b', tier: 5 }] }).profile;
+  const other = fakeBackend('other', { installed: false }).profile;
+  const registry = { claude: REGISTRY.claude, 'small-cli': small, other };
+  // tiers of different backends aren't comparable: claude:opus coding for small-cli:a is not "weaker"
+  assert.deepEqual(pairWarnings(c('claude:opus', 'small-cli:a'), security, { registry, installed: [] }), []);
+  // same backend twice while another installed one could review → the family warning, not for a missing CLI
+  const family = pairWarnings(c('claude:haiku', 'claude:sonnet'), security, { registry, installed: ['claude', 'small-cli'] });
+  assert.equal(family.length, 1);
+  assert.match(family[0], /both run on claude, and small-cli is installed; a reviewer from a different model family catches correlated mistakes/);
+  assert.deepEqual(pairWarnings(c('claude:haiku', 'small-cli:a'), security, { registry, installed: ['claude', 'small-cli'] }), [], 'already a different family');
+  assert.deepEqual(detectedBackends(), [], 'one backend registered: nothing to detect, nothing to say');
+  assert.deepEqual(detectedBackends(registry), ['claude', 'small-cli'].filter((id) => registry[id].detect()), 'only installed ones');
+  assert.ok(!detectedBackends(registry).includes('other'));
+});
+
+test('runAgent hands the role, model and schema to the named backend and returns the common result', async () => {
+  const { profile, calls } = fakeBackend('fake');
+  const registry = { fake: profile };
+  const r = await runAgent({ role: 'reviewer', agent: { cli: 'fake', model: 'big' }, registry, prompt: 'p', budget: 2, timeoutMin: 5, cwd: '/w', logFile: '/l' });
+  assert.deepEqual(r, { ok: true, output: { status: 'implemented' }, cost: 0.25, session: 's1', failure: null, transient: false }, 'no backend-specific fields leak');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].model, 'big');
+  assert.equal(calls[0].role, 'reviewer');
+  assert.equal(calls[0].schema.required[0], 'verdict', 'the role\'s neutral schema');
+  assert.equal(calls[0].prompt, 'p');
+  assert.equal(calls[0].budget, 2);
+  // failures pass through unchanged
+  const failing = fakeBackend('bad', { result: { ok: false, output: null, failure: 'api error: overloaded', transient: true } });
+  const f = await runAgent({ role: 'coder', agent: { cli: 'bad', model: 'small' }, registry: { bad: failing.profile } });
+  assert.deepEqual([f.ok, f.failure, f.transient], [false, 'api error: overloaded', true]);
+});
+
+test('runAgent refuses what no backend can run, before spawning anything', async () => {
+  const { profile, calls } = fakeBackend('fake', { roles: ['reviewer'] });
+  const registry = { fake: profile };
+  await assert.rejects(runAgent({ role: 'coder', agent: { cli: 'fake', model: 'small' }, registry }), /fake can't run the coder role/);
+  await assert.rejects(runAgent({ role: 'reviewer', agent: { cli: 'nope', model: 'small' }, registry }), /unknown agent cli "nope"/);
+  await assert.rejects(runAgent({ role: 'reviewer', agent: { cli: 'fake', model: 'huge' }, registry }), /unknown model "huge" for fake/);
+  await assert.rejects(runAgent({ role: 'reviewer', agent: { cli: 'constructor', model: 'x' }, registry }), /unknown agent cli/);
+  assert.equal(calls.length, 0);
+  // a backend that throws is not swallowed
+  const boom = fakeBackend('boom', { call: async () => { throw new Error('spawn failed'); } });
+  await assert.rejects(runAgent({ role: 'coder', agent: { cli: 'boom', model: 'small' }, registry: { boom: boom.profile } }), /spawn failed/);
+});
+
+test('the cost ledger entry records which cli ran, besides role, model, session and the call\'s own share', () => {
+  const entry = ledgerEntry({ run: 'r', task: 'T', round: 1, version: 1 }, { cli: 'codex', model: 'gpt-5-codex', role: 'coder', resume: 'abc' }, { session: 's2', cost: 0.5, tokens: { input: 3 }, session_total: { cost: 1 } });
+  assert.deepEqual(entry, { run: 'r', task: 'T', round: 1, version: 1, cli: 'codex', role: 'coder', model: 'gpt-5-codex', resumed: true, session: 's2', cost: 0.5, tokens: { input: 3 }, session_total: { cost: 1 } });
+  assert.equal(ledgerEntry({}, { cli: 'claude', model: 'haiku', role: 'coder', resume: null }, {}).resumed, false);
+});
+
+test('the backend report lists models with tiers and per-role recommendations, and flags missing CLIs', () => {
+  const [claude] = describeBackends();
+  assert.equal(claude.id, 'claude');
+  assert.deepEqual(claude.models.map((m) => [m.id, m.tier, m.recommended_for]), [['haiku', 0, ['coder']], ['sonnet', 1, ['reviewer', 'triage']], ['opus', 2, []]]);
+  assert.equal(typeof claude.detected, 'boolean');
+  const missing = describeBackends({ gone: fakeBackend('gone', { installed: false }).profile });
+  assert.equal(missing[0].detected, false);
 });
